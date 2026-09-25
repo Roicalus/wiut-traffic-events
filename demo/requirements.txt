@@ -1,0 +1,12 @@
+# Живое демо (demo/app.py) на CPU-хостинге (Hugging Face Spaces). Сабмиту не нужно:
+# организаторы ставят только ../requirements.txt.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0
+torchvision==0.23.0
+ultralytics==8.4.160
+opencv-python>=4.8,<5,!=4.13.0.90
+numpy>=1.24,<3
+lap>=0.5.12
+gradio==5.50.0
+plotly==7.1.0
+imageio-ffmpeg==0.6.0

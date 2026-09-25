@@ -1,0 +1,9 @@
+.venv/
+samples/
+cache/
+debug/
+labels/
+**/__pycache__/
+*.mp4
+*.MP4
+logs/

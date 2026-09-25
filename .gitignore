@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+cache/
+debug/
+samples/
+*.mp4
+*.MP4
+.venv/
+!weights/*.pt
+logs/

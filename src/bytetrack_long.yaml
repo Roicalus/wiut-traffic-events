@@ -1,0 +1,10 @@
+# Как default bytetrack.yaml, но track_buffer увеличен в разы —
+# чтобы трекер не терял ID у машин, стоящих в очереди на светофор
+# и периодически перекрывающихся соседними машинами.
+tracker_type: bytetrack
+track_high_thresh: 0.5
+track_low_thresh: 0.1
+new_track_thresh: 0.6
+track_buffer: 200
+match_thresh: 0.8
+fuse_score: True

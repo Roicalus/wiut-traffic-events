@@ -1,0 +1,17 @@
+# Версии закреплены: результат должен совпадать с predictions_samples.json.
+#
+# torch 2.8.0 из PyPI на Linux = сборка CUDA 12.8: поддерживает T4 (sm_75) и
+# RTX 50xx (sm_120), работает с драйверами NVIDIA >= 525. Без закрепления pip
+# ставит torch 2.14 / CUDA 13, которому нужен драйвер >= 580 — на более старом
+# драйвере torch молча уходит на CPU и видео не укладываются в бюджет.
+torch==2.8.0
+torchvision==0.23.0
+ultralytics==8.4.160
+# ultralytics сам требует opencv-python (не headless); держать оба пакета нельзя —
+# они пишут в одну папку cv2. <5: мажорная версия 5 не проверялась.
+# На сервере без графики opencv-python нужен libGL: apt-get install -y libgl1 libglib2.0-0
+opencv-python>=4.8,<5,!=4.13.0.90
+numpy>=1.24,<3
+# ByteTrack в ultralytics требует lap; если его нет, ultralytics пытается
+# поставить его через pip прямо во время прогона — офлайн это падение.
+lap>=0.5.12
