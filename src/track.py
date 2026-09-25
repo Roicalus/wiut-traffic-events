@@ -8,6 +8,7 @@ pipeline.extract() (из solution.detect_events()). CLI (main()) — тольк�
 """
 import argparse
 import json
+import os
 import queue
 import threading
 import time
@@ -66,6 +67,10 @@ def _pick_device():
     global _DEVICE
     if _DEVICE is not None:
         return _DEVICE
+    forced = os.environ.get("WIUT_DEVICE")      # демо на ZeroGPU: при импорте CUDA ещё нет
+    if forced:
+        _DEVICE = int(forced) if forced.isdigit() else forced
+        return _DEVICE
     try:
         import torch
     except ImportError:
@@ -84,6 +89,14 @@ def _pick_device():
                   "с cu128: pip install torch torchvision --index-url "
                   "https://download.pytorch.org/whl/cu128")
     return _DEVICE
+
+
+def set_device(device) -> None:
+    """Переключить устройство для всех моделей ("cpu" или номер GPU). Нужно
+    демо на ZeroGPU: видеокарта есть только внутри @spaces.GPU-вызова.
+    ultralytics сам пересоздаёт предиктор, когда меняется device."""
+    global _DEVICE
+    _DEVICE = device
 
 
 def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,

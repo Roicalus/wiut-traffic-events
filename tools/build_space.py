@@ -4,8 +4,10 @@
     cd ../space && git push                   # в репозиторий Space (см. README)
 
 В Space попадает ровно код сабмита (solution.py, src/, веса, зоны и опорные
-кадры) плюс demo/app.py как app.py. requirements.txt — из demo/ (torch в
-CPU-сборке, Gradio); packages.txt — системные библиотеки для OpenCV.
+кадры) плюс demo/app.py как app.py. requirements.txt — из demo/;
+packages.txt — системные библиотеки для OpenCV. Железо Space — ZeroGPU:
+детектор идёт в @spaces.GPU, без GPU — на CPU (см. demo/app.py). Веса и
+картинки — через Git LFS (Hugging Face не принимает бинарники без него).
 """
 from __future__ import annotations
 
@@ -23,7 +25,10 @@ colorFrom: gray
 colorTo: green
 sdk: gradio
 sdk_version: {gradio}
+python_version: "3.12"
 app_file: app.py
+license: agpl-3.0
+short_description: Traffic event detection & accident risk — live demo
 pinned: false
 ---
 
@@ -52,8 +57,12 @@ def main():
     (out / "app.py").write_text(app, encoding="utf-8", newline="\n")
     shutil.copy2(ROOT / "demo" / "requirements.txt", out / "requirements.txt")
     (out / "packages.txt").write_text("libgl1\nlibglib2.0-0\n", encoding="utf-8", newline="\n")
-    (out / ".gitattributes").write_text("*.pt filter=lfs diff=lfs merge=lfs -text\n*.jpg filter=lfs diff=lfs merge=lfs -text\n",
-                                        encoding="utf-8", newline="\n")
+    attrs = out / ".gitattributes"          # у Space свой файл с правилами LFS — дополняем
+    lines = attrs.read_text(encoding="utf-8").splitlines() if attrs.exists() else []
+    for pattern in ("*.pt", "*.jpg"):
+        if not any(line.split()[:1] == [pattern] for line in lines):
+            lines.append(f"{pattern} filter=lfs diff=lfs merge=lfs -text")
+    attrs.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     import gradio
     (out / "README.md").write_text(SPACE_README.format(gradio=gradio.__version__, repo=args.repo),
                                    encoding="utf-8", newline="\n")

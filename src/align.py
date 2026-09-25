@@ -43,6 +43,7 @@ MIN_INLIERS = 40           # подобие
 MIN_INLIERS_H = 60         # гомография: 8 степеней свободы — нужно больше опоры
 MIN_INLIER_RATIO_H = 0.2
 RATIO = 0.8                # тест Лоу для SIFT
+N_FEATURES = 4000          # перебор соответствий квадратичен: 8000 — 3.4 с на кадр с банком из 3
 RANSAC_PX = 3.0            # порог RANSAC в px уменьшенного кадра
 SAMPLE_FRACS = (0.0, 0.5, 0.9)   # кадры видео для оценки (доли длительности)
 SHORT_VIDEO_SEC = 60.0           # короче — один кадр: перемотка 4K стоит ~2.5 с на кадр
@@ -54,7 +55,7 @@ MAX_ROT_DEG = 10.0
 MAX_SCALE_DEV = 0.35             # приближение камеры 1.25 + своё 1.3% ещё проходит
 MAX_PERSPECTIVE_AREA_DEV = 0.5   # площадь кадра / масштаб^2: 0.5-1.5 (вырожденная перспектива — нет)
 MOVED_WARN_PX = 40.0
-CONFIDENT_INLIERS = 800          # столько у основного опорного кадра — остальные не перебираем
+CONFIDENT_INLIERS = 400          # столько инлаеров — остальные опорные кадры не перебираем
 
 _refs_cache = None
 
@@ -102,7 +103,7 @@ def _small(frame_bgr):
 
 def _features(gray):
     gray = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray)
-    return cv2.SIFT_create(nfeatures=8000).detectAndCompute(gray, None)
+    return cv2.SIFT_create(nfeatures=N_FEATURES).detectAndCompute(gray, None)
 
 
 def load_reference():
@@ -127,6 +128,7 @@ def _load_refs() -> list[dict]:
                 gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
                 kp, des = _features(gray)
                 _refs_cache.append({"name": e["name"], "gray": gray, "kp": kp, "des": des,
+                                    "brightness": float(gray.mean()),
                                     "full_width": float(e.get("full_width") or gray.shape[1]),
                                     "video": e.get("video"),
                                     "H_from_main": np.asarray(e["H_from_main"], np.float64)})
@@ -213,7 +215,9 @@ def estimate(frame_bgr, refs=None) -> tuple[np.ndarray | None, dict]:
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     kp_f, des_f = _features(gray)
     best, best_rep, fails = None, None, []
-    for ref in refs:
+    # сначала — ближайший по освещению опорный кадр: обычно его и хватает
+    brightness = float(gray.mean())
+    for ref in sorted(refs, key=lambda r: abs(r["brightness"] - brightness)):
         H, rep = _estimate_one(ref, gray, kp_f, des_f, w, h)
         if H is None:
             fails.append(dict(rep, ref=ref["name"]))
@@ -221,7 +225,7 @@ def estimate(frame_bgr, refs=None) -> tuple[np.ndarray | None, dict]:
         if best is None or rep["inliers"] > best_rep["inliers"]:
             best, best_rep = H @ ref["H_from_main"], dict(rep, ref=ref["name"], ref_video=ref["video"])
         if best_rep is not None and best_rep["inliers"] >= CONFIDENT_INLIERS:
-            break   # днём основной кадр даёт 2000+ — тёмные опорные кадры не нужны
+            break   # похожий по свету опорный кадр даёт сотни инлаеров — дальше не ищем
     if best is None:
         return None, fails[0] if len(fails) == 1 else {"status": fails[0]["status"], "tried": fails}
     best /= best[2, 2]

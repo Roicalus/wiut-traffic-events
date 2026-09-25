@@ -96,22 +96,23 @@ def risk_pass(path, progress=None) -> tuple[list, list]:
     return curve, explains
 
 
-def analyze(video_path, work_dir, progress=None) -> dict:
-    """progress(frac, message) — колбэк прогресса (0..1). Возвращает dict:
-    events, risk, diagnostics, info, align, annotated (путь к видео),
-    json (путь к events.json), timings."""
+def prepare(video_path, work_dir, progress=None) -> tuple[Path, dict]:
+    """CPU: проверка и пережатие. Возвращает (путь к рабочему ролику, info)."""
+    say = progress or (lambda frac, msg: None)
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
-    say = progress or (lambda frac, msg: None)
-    timings, t0 = {}, time.perf_counter()
-
     info = probe(video_path)
     if info["duration"] > MAX_DURATION_SEC:
         raise VideoError(f"The clip is {info['duration']:.0f} s long; the demo accepts up to {MAX_DURATION_SEC:.0f} s.")
     say(0.0, "Preparing the video")
     path = transcode(video_path, work / "input.mp4", info, lambda f: say(0.25 * f, "Preparing the video"))
-    timings["transcode"] = time.perf_counter() - t0
+    return path, info
 
+
+def compute(path, progress=None) -> dict:
+    """Детектор и правила: Part A и Part B. На ZeroGPU — внутри @spaces.GPU,
+    поэтому возвращает только сериализуемое."""
+    say = progress or (lambda frac, msg: None)
     t1 = time.perf_counter()
     say(0.25, "Part A: detector, tracker, traffic light")
     obs = pipeline.extract(str(path), classes=solution.CLASSES, tracker_kwargs=DEMO_TRACKER)
@@ -119,34 +120,52 @@ def analyze(video_path, work_dir, progress=None) -> dict:
     records, zones_ref = pipeline.reference_view(obs)
     shown = list(solution.CLASSES) + list(solution.DIAGNOSTIC_CLASSES)
     debug_events = compute_events_debug(records, zones_ref, obs.light_samples, classes=shown)
-    diag = [[s, e, lbl] for s, e, lbl, _ in debug_events if lbl in solution.DIAGNOSTIC_CLASSES]
-    timings["part_a"] = time.perf_counter() - t1
-
     t2 = time.perf_counter()
     say(0.55, "Part B: accident risk")
     curve, explains = risk_pass(path, lambda f: say(0.55 + 0.2 * f, "Part B: accident risk"))
-    timings["part_b"] = time.perf_counter() - t2
+    obs.scanner = None
+    return {"obs": obs, "events": events, "debug_events": debug_events, "risk": curve,
+            "explains": explains, "device": str(pipeline.track._pick_device()),
+            "timings": {"part_a": t2 - t1, "part_b": time.perf_counter() - t2}}
 
+
+def finish(video_path, path, info, work_dir, computed, progress=None) -> dict:
+    """CPU: видео с разметкой и events.json."""
+    say = progress or (lambda frac, msg: None)
+    work = Path(work_dir)
+    obs, events, debug_events = computed["obs"], computed["events"], computed["debug_events"]
+    diag = [[s, e, lbl] for s, e, lbl, _ in debug_events if lbl in solution.DIAGNOSTIC_CLASSES]
     t3 = time.perf_counter()
     say(0.75, "Rendering the annotated video")
     annotated = render.render(path, work / "annotated.mp4", obs.zones, obs.records, obs.light_samples,
-                              events + diag, curve, debug_events, DEMO_TRACKER["stride"], explains=explains,
+                              events + diag, computed["risk"], debug_events, DEMO_TRACKER["stride"],
+                              explains=computed["explains"],
                               progress=lambda f: say(0.75 + 0.24 * f, "Rendering the annotated video"))
-    timings["render"] = time.perf_counter() - t3
-    timings["total"] = time.perf_counter() - t0
-
     light = [s for _, s in obs.light_samples] if obs.light_samples else []
+    timings = dict(computed["timings"], render=time.perf_counter() - t3)
     result = {
         "video": Path(video_path).name,
         "info": {k: round(v, 3) if isinstance(v, float) else v for k, v in info.items()},
         "events": sorted(events),
         "diagnostics": sorted(diag),
-        "risk": curve,
+        "risk": computed["risk"],
         "align": obs.extra.get("align"),
         "light": {s: round(light.count(s) / len(light), 3) for s in set(light)} if light else None,
+        "device": computed["device"],
         "timings_sec": {k: round(v, 1) for k, v in timings.items()},
     }
     json_path = work / "events.json"
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     say(1.0, "Done")
     return dict(result, annotated=str(annotated), json=str(json_path))
+
+
+def analyze(video_path, work_dir, progress=None) -> dict:
+    """Все три этапа подряд (локально, без ZeroGPU). progress(frac, message)."""
+    t0 = time.perf_counter()
+    path, info = prepare(video_path, work_dir, progress)
+    t_prep = time.perf_counter() - t0
+    computed = compute(path, progress)
+    result = finish(video_path, path, info, work_dir, computed, progress)
+    result["timings_sec"].update(transcode=round(t_prep, 1), total=round(time.perf_counter() - t0, 1))
+    return result

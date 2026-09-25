@@ -3,15 +3,25 @@
     python demo/app.py            # http://127.0.0.1:7860
 
 The same pipeline as the submission (solution.py / src/), run through
-src/analyze.py: the clip is downscaled for CPU hosting, then Part A (events)
-and Part B (causal accident risk) run and an annotated video is rendered.
+src/analyze.py: the clip is downscaled, Part A (events) and Part B (causal
+accident risk) run, and an annotated video is rendered. On Hugging Face
+ZeroGPU the detector runs inside a @spaces.GPU call (the GPU exists only
+there); if it is not available (quota, error) the same step runs on the CPU.
 """
 from __future__ import annotations
 
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+try:                        # Hugging Face ZeroGPU: GPU только внутри @spaces.GPU
+    import spaces           # импортируется до torch — пакет его патчит
+except ImportError:
+    spaces = None
+if spaces is not None:
+    os.environ.setdefault("WIUT_DEVICE", "cpu")   # при импорте CUDA ещё нет
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -20,10 +30,11 @@ import gradio as gr  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 
 import solution  # noqa: E402,F401  (seeds, warm-up, CLASSES)
-from src import analyze  # noqa: E402
+from src import analyze, track  # noqa: E402
 from src.render import EVENT_COLORS  # noqa: E402
 
 MAX_FILE = os.environ.get("DEMO_MAX_FILE", "3gb")
+GPU_MAX_SEC = 120
 INTRO = f"""
 # Traffic events at the intersection — live demo
 
@@ -32,10 +43,23 @@ resolution — 4K is downscaled to {analyze.DEMO_WIDTH} px at {analyze.DEMO_FPS:
 The page returns every detected event as `[start, end, class]`, a timeline, the accident-risk curve
 (Part B, causal) and the video annotated with our own tooling.
 
-The demo runs on a **CPU**: a 2-minute 4K clip takes several minutes, progress is shown below.
-It is the same code as the submission (the submission uses the full 4K frame on a GPU).
-Videos from a different camera are processed too, but the scene zones will not fit them.
+The detector runs on a shared GPU when one is available and falls back to a **CPU** otherwise
+(a 2-minute 4K clip then takes several minutes). Progress is shown below. It is the same code
+as the submission (the submission uses the full 4K frame). Videos from a different camera are
+processed too, but the scene zones will not fit them.
 """
+
+
+def _gpu_seconds(path, info):
+    """Сколько GPU-времени заказать у ZeroGPU: по длине ролика, не больше лимита."""
+    return int(min(GPU_MAX_SEC, 30 + 0.6 * info["duration"]))
+
+
+if spaces is not None:
+    @spaces.GPU(duration=_gpu_seconds)
+    def compute_on_gpu(path, info):
+        track.set_device(0)
+        return analyze.compute(path)
 
 
 def _hex(bgr):
@@ -76,6 +100,7 @@ def summary(result):
     light = result.get("light")
     light = ", ".join(f"{k} {v:.0%}" for k, v in sorted(light.items())) if light else "not used"
     t = result["timings_sec"]
+    device = "CPU" if result.get("device") == "cpu" else "GPU"
     counts = {}
     for _, _, label in result["events"]:
         counts[label] = counts.get(label, 0) + 1
@@ -83,8 +108,9 @@ def summary(result):
     return (f"**{len(result['events'])} events** — {found}\n\n"
             f"- Scene zones: {align}\n- Traffic light states: {light}\n"
             f"- Alarms (risk ≥ 0.5): {sum(1 for _, s in result['risk'] if s >= 0.5)} frames\n"
-            f"- Time: {t['total']:.0f} s (prepare {t['transcode']:.0f}, Part A {t['part_a']:.0f}, "
-            f"Part B {t['part_b']:.0f}, render {t['render']:.0f})\n"
+            f"- Time: {t['total']:.0f} s, detector on {device} (prepare {t['transcode']:.0f}, "
+            f"Part A {t['part_a']:.0f}, Part B {t['part_b']:.0f}, render {t['render']:.0f})\n"
+            + (f"- {result['note']}\n" if result.get("note") else "")
             + (f"- Diagnostics (not submitted): curb mounts {len(result['diagnostics'])}\n"
                if result["diagnostics"] else ""))
 
@@ -93,10 +119,27 @@ def run(video, progress=gr.Progress()):
     if not video:
         raise gr.Error("Upload an .mp4 first.")
     work = tempfile.mkdtemp(prefix="demo_")
+    say = lambda f, msg: progress(f, desc=msg)  # noqa: E731
+    t0 = time.perf_counter()
     try:
-        result = analyze.analyze(video, work, progress=lambda f, msg: progress(f, desc=msg))
+        path, info = analyze.prepare(video, work, say)
+        t_prep = time.perf_counter() - t0
+        computed, note = None, None
+        if spaces is not None:
+            say(0.3, "Part A + Part B on a GPU")
+            try:
+                computed = compute_on_gpu(str(path), info)
+            except Exception as exc:  # noqa: BLE001 — квота ZeroGPU и т.п.: считаем на CPU
+                note = f"GPU was not available ({type(exc).__name__}: {str(exc)[:120]}); computed on the CPU"
+                print(f"[demo] {note}")
+                track.set_device("cpu")
+        if computed is None:
+            computed = analyze.compute(path, say)
+        result = analyze.finish(video, path, info, work, computed, say)
     except analyze.VideoError as exc:
         raise gr.Error(str(exc)) from exc
+    result["timings_sec"].update(transcode=round(t_prep, 1), total=round(time.perf_counter() - t0, 1))
+    result["note"] = note
     rows = [[round(s, 2), round(e, 2), round(e - s, 2), label] for s, e, label in result["events"]]
     return (result["annotated"], timeline(result), rows or [[None, None, None, "no events"]],
             result["json"], summary(result))
