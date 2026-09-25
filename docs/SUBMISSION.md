@@ -8,7 +8,7 @@
 2. Веса лежат в `weights/` (и закоммичены — их ~25 МБ).
 3. Локальный torch = 2.8.0 (как в requirements): `python -c "import torch; print(torch.__version__)"`.
 4. Итоговый прогон на ВСЕХ сэмплах БЕЗ --no-risk и без WIUT_TIME_GUARD:
-   `python run_submission.py --videos samples --out predictions_samples.json --team <команда>`
+   `python run_submission.py --videos samples --out predictions_samples.json --team SoWeNeedAName`
 5. `python evaluate.py --pred predictions_samples.json --validate-only`
 6. README: заполнить команду (кто что делал, ссылки), убрать `<team name>`.
 7. Детерминизм: `python tools/presubmit.py --determinism samples/C3905.MP4`

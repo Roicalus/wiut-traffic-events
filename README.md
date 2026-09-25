@@ -1,4 +1,4 @@
-# WIUT Hackathon 2026 — CV track: <team name>
+# WIUT Hackathon 2026 — CV track: SoWeNeedAName
 
 Traffic event detection (Part A) and causal accident anticipation (Part B) for a
 fixed 4K CCTV camera. Detector + tracker + rules on trajectories and a
@@ -13,6 +13,10 @@ pip install -r requirements.txt
 python run_submission.py --videos /data/test --out predictions.json
 python evaluate.py --pred predictions.json --validate-only
 ```
+
+`predictions_samples.json` is exactly the output of this commit on the four sample
+videos (reproduce: `python run_submission.py --videos samples --out predictions_samples.json
+--team SoWeNeedAName`; two runs give identical events and risk, see §4).
 
 **Weights** (`weights/yolo11s.pt`, `weights/yolo11n.pt`, ~25 MB total) are committed
 to the repository, so no download is needed. If they are missing,
@@ -169,9 +173,13 @@ The repository is licensed under **AGPL-3.0**, as required by Ultralytics YOLO.
 
 ## 5. Team
 
+Team **SoWeNeedAName**:
+
 | Member | Role | What they did | Links |
 |---|---|---|---|
-| … | … | … | GitHub · LinkedIn · portfolio |
+| Shaxzod Kalandarov | Captain | to be added | [GitHub](https://github.com/Roicalus) |
+| Aleksandr Polyakov | to be added | to be added | to be added |
+| Yana Semianiuta | to be added | to be added | to be added |
 
 ## 6. Repository layout
 
