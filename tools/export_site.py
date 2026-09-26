@@ -65,14 +65,11 @@ EXAMPLES = [
 # Failure and borderline cases — honestly, with an explanation.
 FAILURES = [
     ("False alarm: pedestrian on the island", "C3902.MP4", 33.6,
-     "Part B raises a 0.4 s alarm (risk 0.50) for a pedestrian standing on the traffic island while a car passes. "
+     "Part B raises a 0.5 s alarm (risk 0.52), the only one on the samples, for a pedestrian standing on the traffic island while a car passes. "
      "Distances are measured in image space, and perspective squeezes the gap between the island and the lane."),
-    ("False alarm: bus next to a car", "C3902.MP4", 216.2,
-     "A bus and a car in adjacent lanes (0.3 s, risk 0.51): the bus box is huge, so the pair distance normalised by "
-     "box size looks like a contact. Same cause: image-space distances."),
     ("Close following read as a near conflict", "C3897.MP4", 183.1,
-     "Two cars in the far lane, one closing in on the other in slow traffic. The risk curve peaks at 0.498 "
-     "here, a hair below the 0.5 alarm line, although nothing dangerous happens. Distances are "
+     "Two cars in the far lane, one closing in on the other in slow traffic. The risk curve peaks at 0.45 "
+     "here, below the 0.5 alarm line but the highest value of the clip, although nothing dangerous happens. Distances are "
      "measured in image space: on the far side of the junction perspective squeezes a normal following gap "
      "into a few pixels. A ground-plane (bird's-eye) projection with metric gaps is the fix we would try."),
     ("Jaywalking or a desire line?", "C3897.MP4", 150.0,

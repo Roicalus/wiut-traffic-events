@@ -128,8 +128,10 @@ installed at run time).
   v_c²/(2·gap) above 1–3 diagonals/s²). The first version used closest approach
   alone and scored ≥ 0.5 on 57–71 % of all sample frames: a car rolling up to a
   stopped queue is "about to collide" at constant velocity. Now 0.1 % of frames,
-  2 alarms in 18 min of samples, both false and 0.3–0.4 s long (C3902: a pedestrian
-  on the island, a bus next to a car; the same in `predictions_samples.json`). A capped
+  1 alarm in 18 min of samples, false and 0.5 s long (C3902: a pedestrian on the
+  island; the same in `predictions_samples.json`). Two vehicles of one class whose
+  boxes differ in size by more than 2.2x are at different depths and never pair up
+  (a near car heading for a car far down the road looked like a contact). A capped
   sub-threshold term (≤ 0.3) for any collision course ranks the 1–5 s before
   contact higher for AP without creating alarms. Synthetic scenarios
   (`tests/test_risk.py`: T-bone, rear-end, pedestrian; queue braking, parallel
