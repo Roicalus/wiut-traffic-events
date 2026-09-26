@@ -55,6 +55,8 @@ RISK_CONF = 0.35
 CROP_TOP_FRAC = 0.18       # как в Part A: верх кадра — деревья/небо
 BASE_STRIDE = 2
 MAX_STRIDE = 25            # реже раза в секунду смысла нет
+REPLAN_WARMUP_FRAMES = 150  # разгон CUDA и первые декоды не в счёт
+REPLAN_MIN_FRAMES = 300     # темп меряем хотя бы по 10 с видео
 HISTORY = 30               # точек на трек: >= 1 с при BASE_STRIDE
 STALE_SEC = 1.0
 VEL_BASELINE_SEC = 0.5
@@ -265,7 +267,8 @@ class RiskEstimator:
         self._pending = None               # (future, t_sec) детекции в работе
         self.n_failed = 0
         self.explain_log = None            # демо: список (t, score, пара риска) для отрисовки
-        self._check = None                 # (wall, idx) прошлой проверки бюджета
+        self._base = None                  # (wall, idx): с какого места меряем темп
+        self._over = 0                     # сколько проверок подряд прогноз за дедлайном
 
     def step(self, frame: np.ndarray, t_sec: float) -> float:
         self.idx += 1
@@ -319,12 +322,17 @@ class RiskEstimator:
 
     # ------------------------------------------------------------ бюджет
     def _replan(self, now: float) -> None:
-        """Темп за последние 50 кадров (декод харнесса + наш инференс) ->
-        прогноз конца видео. Не успеваем — реже детектор; дедлайн прошёл —
-        детектор выключен и скор 0 (старый скор стал бы одним длинным алармом)."""
+        """Прогноз конца видео по СРЕДНЕМУ темпу (декод харнесса + наш инференс)
+        с момента после разгона. Не успеваем — реже детектор; дедлайн прошёл —
+        детектор выключен и скор 0 (старый скор стал бы одним длинным алармом).
+
+        Темп по последним 50 кадрам был слишком нервным: одна медленная секунда
+        декодирования давала прогноз "+19 s к дедлайну" там, где видео кончилось
+        с запасом 300 с (C3902), stride рос, и кривая риска зависела от того,
+        что ещё грузило машину. Теперь: среднее с начала, и две проверки подряд
+        за дедлайном — только тогда stride += 1 (и темп меряется заново)."""
         if self.deadline == float("inf") or self.n_frames <= 0:
             return
-        prev, self._check = self._check, (now, self.idx)
         if now > self.deadline:
             if not self.disabled:
                 print(f"[risk] бюджет исчерпан на t={self.idx / self.fps:.0f}s — детектор выключен")
@@ -332,10 +340,18 @@ class RiskEstimator:
             self._drain()
             self.last_score = 0.0
             return
-        if prev is None or self.idx < 150:          # первые кадры — разгон CUDA
+        if self.idx < REPLAN_WARMUP_FRAMES:        # первые кадры — разгон CUDA
             return
-        rate = (now - prev[0]) / max(self.idx - prev[1], 1)
+        if self._base is None:
+            self._base = (now, self.idx)
+            return
+        done = self.idx - self._base[1]
+        if done < REPLAN_MIN_FRAMES:
+            return
+        rate = (now - self._base[0]) / done
         projected = now + rate * max(self.n_frames - self.idx, 0)
-        if projected > self.deadline and self.stride < MAX_STRIDE:
+        self._over = self._over + 1 if projected > self.deadline else 0
+        if self._over >= 2 and self.stride < MAX_STRIDE:
             self.stride += 1
+            self._base, self._over = (now, self.idx), 0
             print(f"[risk] прогноз {projected - self.deadline:+.0f}s к дедлайну -> stride={self.stride}")

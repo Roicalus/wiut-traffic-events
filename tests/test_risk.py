@@ -98,3 +98,32 @@ def test_stale_tracks_are_forgotten():
     sc.feed(np.array([box(1, 2, (100, 100), CAR)], np.float32), 0.0)
     sc.feed(np.zeros((0, 6), np.float32), 2.0)
     assert sc.tracks == {}
+
+
+def _guard(n_frames=9000, deadline=600.0):
+    from src.risk import RiskEstimator, BASE_STRIDE
+    est = RiskEstimator.__new__(RiskEstimator)      # без модели: проверяем только бюджет
+    est.deadline, est.n_frames, est.fps = deadline, n_frames, 30.0
+    est.stride, est.disabled, est._base, est._over, est.idx = BASE_STRIDE, False, None, 0, 0
+    est._pending, est.last_score = None, 0.0
+    return est
+
+
+def test_one_slow_second_does_not_thin_part_b():
+    """Одна медленная секунда (декод, GC) не должна поднимать stride: иначе кривая
+    риска зависит от нагрузки на машину (было на C3902, прогноз +19 s)."""
+    est, now = _guard(), 0.0
+    for idx in range(0, 9000, 50):
+        now += 50 * (0.03 if not 3000 <= idx < 3050 else 1.0)   # 0.03 с/кадр, один провал
+        est.idx = idx
+        est._replan(now)
+    assert est.stride == 2
+
+
+def test_consistently_slow_run_raises_stride():
+    est, now = _guard(deadline=300.0), 0.0
+    for idx in range(0, 3000, 50):
+        now += 50 * 0.06                                            # 540 с на 9000 кадров > 300
+        est.idx = idx
+        est._replan(now)
+    assert est.stride > 2
