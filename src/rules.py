@@ -521,8 +521,30 @@ def detect_jaywalking(person_objs, roadway_zones, crossing_zones=(), min_duratio
     return (events, ids) if return_ids else events
 
 
+STOP_LINE_MIN_STOP_SEC = 1.5   # короче — не остановка, а притормаживание
+
+
+def _waited_then_entered_on_green(samples, t_from, wait_zone, junction_zones, speed_thresh=0.3,
+                                  min_stop=STOP_LINE_MIN_STOP_SEC, light=None):
+    """True, если после t_from машина постояла >= min_stop в wait_zone (за
+    стоп-линией) и въехала на перекрёсток уже не на красный: это stop_line, а
+    не проезд на красный."""
+    stopped_since, waited = None, False
+    for s in samples:
+        if s["t"] < t_from:
+            continue
+        if s["zones"] & junction_zones and wait_zone not in s["zones"]:
+            return waited and light.at(s["t"]) != "red"
+        if wait_zone in s["zones"] and s["speed"] < speed_thresh:
+            stopped_since = s["t"] if stopped_since is None else stopped_since
+            waited = waited or s["t"] - stopped_since >= min_stop
+        else:
+            stopped_since = None
+    return False
+
+
 def detect_red_light(vehicle_objs, light, gate_zone="stop_line", exit_zone="crossing_far",
-                      return_ids=False):
+                      wait_zone=None, junction_zones=frozenset(), return_ids=False):
     """Машина реально проезжает на красный: заходит в gate_zone (широкая
     зона очереди перед переходом, это ок и на "правильную" остановку) на
     красный свет И ДОЕЗЖАЕТ до exit_zone, пока свет ВСЁ ЕЩЁ красный.
@@ -554,6 +576,8 @@ def detect_red_light(vehicle_objs, light, gate_zone="stop_line", exit_zone="cros
                 break
         if not was_in_exit or not violated:
             continue  # не доехал(а) до exit_zone, или доехал(а) уже на зелёном
+        if wait_zone and _waited_then_entered_on_green(samples, t_cross, wait_zone, junction_zones, light=light):
+            continue  # встал(а) за линией и поехал(а) на зелёный — это stop_line
         if t_end is None:
             t_end = samples[-1]["t"]
         if t_end > t_cross:
@@ -562,19 +586,30 @@ def detect_red_light(vehicle_objs, light, gate_zone="stop_line", exit_zone="cros
     return (events, ids) if return_ids else events
 
 
-def detect_stop_line(vehicle_objs, light, speed_thresh=0.3, max_gap=2.0, return_ids=False):
-    """Бонус: та же light-детекция почти бесплатно даёт stop_line —
-    остановка ПЕРЕД stop_line на красный (машина не заезжает на переход)."""
+def detect_stop_line(vehicle_objs, light, zone="past_stop_line", speed_thresh=0.3, max_gap=2.0,
+                     min_stop=STOP_LINE_MIN_STOP_SEC, return_ids=False):
+    """stop_line по определению задачи: машина ОСТАНОВИЛАСЬ за стоп-линией на
+    красный, не въехав на перекрёсток; конец события — включение зелёного.
+
+    zone — область за стоп-линией: от линии до дальнего края зебры, только в
+    ширину полос нашей очереди (past_stop_line). Раньше считалась только полоса
+    до зебры, и машина, вставшая передом на зебре (C3905, 1:18, 37 с на
+    красный), не попадала никуда. Одно событие на машину за фазу красного;
+    кто потом проехал на красный — тот red_light (фильтр в compute_events_debug)."""
     events, ids = [], []
     for oid, samples in vehicle_objs.items():
-        runs = sample_runs(samples, lambda s: s["speed"] < speed_thresh and "stop_line" in s["zones"], max_gap)
+        runs = sample_runs(samples, lambda s: s["speed"] < speed_thresh and zone in s["zones"], max_gap)
+        last_end = None
         for s, e in runs:
-            if light.at(s) != "red":
+            if e - s < min_stop or light.at(s) != "red":
                 continue
+            if last_end is not None and s < last_end:
+                continue  # та же фаза красного: машина чуть проползла и снова встала
             t_green = light.next_after(s, "green")
             t_end = t_green if t_green is not None else e
             events.append([round(s, 2), round(t_end, 2), "stop_line"])
             ids.append(oid)
+            last_end = t_end
     return (events, ids) if return_ids else events
 
 
@@ -1255,16 +1290,19 @@ def compute_events_debug(records, zones, light_samples=None, classes=None):
                                                     return_ids=True))
 
     if light is not None and "stop_line" in zones and want("red_light", "stop_line"):
+        stop_zone = "past_stop_line" if "past_stop_line" in zones else "stop_line"
         red, red_ids = [], []
         if "crossing_far" in zones:
-            red, red_ids = run("red_light", lambda: detect_red_light(vehicle_objs, light, return_ids=True))
+            red, red_ids = run("red_light", lambda: detect_red_light(
+                vehicle_objs, light, wait_zone=stop_zone, junction_zones=_zones_by_prefix(zones, ("crossroad",)),
+                return_ids=True))
         if want("stop_line"):
             # stop_line — "встал за стоп-линией, НЕ въехав на перекрёсток"; кто потом
             # проехал на красный, тот red_light (C3902, 97 с: мотоцикл получал оба)
             red_set = set(red_ids)
 
             def stop_line():
-                events, ids = detect_stop_line(vehicle_objs, light, return_ids=True)
+                events, ids = detect_stop_line(vehicle_objs, light, zone=stop_zone, return_ids=True)
                 keep = [k for k, oid in enumerate(ids) if oid not in red_set]
                 return [events[k] for k in keep], [ids[k] for k in keep]
             run("stop_line", stop_line)

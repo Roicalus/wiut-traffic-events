@@ -299,3 +299,56 @@ def test_rider_on_motorcycle_is_not_jaywalking():
     person = track(1, 0, path, 0, 5, w=40, h=90)
     bike = track(2, 3, path, 0, 5, w=90, h=110)
     assert events_of(person + bike, "jaywalking") == []
+
+
+def _red_then_green(t_green, t_end):
+    return [[round(t, 2), "red" if t < t_green else "green"] for t in np.arange(0, t_end, 0.12)]
+
+
+def test_stop_on_the_zebra_on_red_is_stop_line():
+    """Встал передом на зебре на красный и поехал на зелёный (C3905, 1:18):
+    stop_line, не red_light и не stopped_vehicle."""
+    p = point_in("past_stop_line", exclude=("stop_line",), seed=31)      # на зебре, в полосах очереди
+    q = point_in("crossroad", exclude=("crossing_far", "past_stop_line"), seed=32)
+    go = 30.0
+    path = lambda t: p if t < go else (p[0] + (q[0] - p[0]) * min(1, (t - go) / 3),
+                                       p[1] + (q[1] - p[1]) * min(1, (t - go) / 3))
+    recs = track(1, 2, path, 0, 36, w=300, h=200)
+    stitch_records(recs)
+    ev = rules.compute_events(recs, ZONES, _red_then_green(go - 0.5, 36))
+    labels = [e[2] for e in ev]
+    assert labels.count("stop_line") == 1 and "red_light" not in labels, ev
+    s = [e for e in ev if e[2] == "stop_line"][0]
+    assert s[0] < 1.0 and abs(s[1] - (go - 0.5)) < 0.3          # до включения зелёного
+
+
+def test_waiting_past_the_line_then_going_on_green_is_not_red_light():
+    """Курьер ждёт за стоп-линией и уезжает с очередью на зелёный (C3902, 1:38)."""
+    a = point_in("stop_line", seed=33)
+    b = point_in("past_stop_line", exclude=("stop_line",), seed=34)
+    q = point_in("crossroad", exclude=("crossing_far", "past_stop_line"), seed=35)
+    def path(t):
+        if t < 10:
+            return a
+        if t < 12:
+            k = (t - 10) / 2
+            return (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k)
+        if t < 20:
+            return b
+        k = min(1, (t - 20) / 3)
+        return (b[0] + (q[0] - b[0]) * k, b[1] + (q[1] - b[1]) * k)
+    recs = track(1, 3, path, 0, 25, w=60, h=80)
+    stitch_records(recs)
+    labels = [e[2] for e in rules.compute_events(recs, ZONES, _red_then_green(19.5, 25))]
+    assert "red_light" not in labels and "stop_line" in labels, labels
+
+
+def test_driving_through_on_red_is_red_light():
+    """Проехал стоп-линию и зебру на красный без остановки: red_light, не stop_line."""
+    a = point_in("queue_zone", seed=36)
+    q = point_in("crossroad", exclude=("crossing_far", "past_stop_line"), seed=37)
+    path = lambda t: (a[0] + (q[0] - a[0]) * min(1, t / 4), a[1] + (q[1] - a[1]) * min(1, t / 4))
+    recs = track(1, 2, path, 0, 8, w=300, h=200)
+    stitch_records(recs)
+    labels = [e[2] for e in rules.compute_events(recs, ZONES, _red_then_green(99, 8))]
+    assert labels.count("red_light") == 1 and "stop_line" not in labels, labels

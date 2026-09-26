@@ -103,7 +103,9 @@ installed at run time).
   normal red-light queue is not congestion), stopped_vehicle (excluding waiting at
   the signal and cars packed in a queue or jam; any lone stop on the junction
   counts), jaywalking (crossings and pedestrian islands excluded), red_light,
-  stop_line (not for vehicles that then run the red), illegal_turn (the
+  stop_line (a stop of ≥ 1.5 s on red past the stop line: the band before the far
+  zebra or the zebra itself, in the lanes of the queue; not for vehicles that then
+  enter the junction on red), illegal_turn (the
   forbidden route: from the main road deep into the junction, a U-shaped turn
   there and back onto the lower end of the near crossing) and experimental
   rules for the other classes. Driving onto a pedestrian island is detected

@@ -58,6 +58,8 @@ EXAMPLES = [
      "signal phase. An ordinary red-light queue is not congestion; it clears on green."),
     ("jaywalking", "C3897.MP4", 142.3, "Pedestrians leave the zebra and cut across the asphalt towards the "
      "near crossing."),
+    ("stop_line", "C3905.MP4", 77.7, "At dusk a car stops on red past the stop line, its front on the far "
+     "zebra, and waits there for the green instead of behind the line."),
 ]
 
 # Неудачные и спорные случаи — честно, с объяснением.
