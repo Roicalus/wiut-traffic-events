@@ -81,6 +81,8 @@ BRAKE_LOW, BRAKE_HIGH = 0.4, 0.7
 BRAKE_CAP = 0.35           # braking alone does not raise the risk to alarm level
 MEDIAN_K = 9                # 0.6 s median at 15 Hz: on the samples 28 -> 4 false alarms, alarm ~0.2 s later
 
+SAME_CLASS_MAX_SIZE_RATIO = 2.2  # two cars whose boxes differ more are at different depths
+
 VEHICLE_CLS = {1, 2, 3, 5, 7}
 PERSON_CLS = 0
 
@@ -167,6 +169,10 @@ class RiskScorer:
 
         i, j = np.triu_indices(len(states), k=1)
         keep = (is_veh[i] | is_veh[j]) & (moving[i] | moving[j])
+        # Same class but very different box sizes: different depths, so no contact, however close
+        # the boxes look in the image (C3902, 0:13.5: a near car heading for a car far down the road).
+        ratio = np.maximum(diag[i], diag[j]) / np.maximum(np.minimum(diag[i], diag[j]), 1.0)
+        keep &= ~((cls[i] == cls[j]) & (ratio > SAME_CLASS_MAX_SIZE_RATIO))
         i, j = i[keep], j[keep]
         if len(i) == 0:
             return 0.0

@@ -144,3 +144,17 @@ def test_track_id_handed_from_person_to_car_does_not_spike_risk():
             dets.append([1320, 900, 1620, 1100, 7, 2])                            # same id — the neighbouring car
         scores.append(sc.feed(np.array(dets, np.float32), t))
     assert max(scores) < 0.5, max(scores)
+
+
+def test_near_car_heading_for_a_car_far_down_the_road_is_not_a_conflict():
+    """Same class, very different box sizes = different depths (C3902, 0:13.5): the image-space
+    closest approach says 'contact in 0.5 s', but the far car is metres away on the ground."""
+    from src.risk import RiskScorer
+    sc = RiskScorer((3840, 2074))
+    scores = []
+    for k in range(40):
+        t = k / 15
+        near = [2900 - 600 * t - 180, 900 - 150 * t - 150, 2900 - 600 * t + 180, 900 - 150 * t, 1, 2]  # diag ~360
+        far = [2320, 700, 2410, 740, 2, 2]                                                            # diag ~100, parked
+        scores.append(sc.feed(np.array([near, far], np.float32), t))
+    assert max(scores) < 0.5, max(scores)
