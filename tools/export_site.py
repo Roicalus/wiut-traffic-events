@@ -39,6 +39,7 @@ from src.pipeline import get_zones, load_obs, reference_view  # noqa: E402
 from src.rules import VEHICLE_CLASSES, annotate, group_by_object  # noqa: E402
 
 WEB_WIDTH = 960
+POSTER_AT_SEC = 20.0          # кадр-превью размеченного ролика
 BIN_SEC = 5.0
 LIGHTING = {"C3896": "day, direct sun", "C3897": "day, direct sun", "C3902": "sunset", "C3905": "dusk, headlights on"}
 SERIES = {"car": [2], "bus": [5], "truck": [7], "motorcycle / bicycle": [1, 3], "person": [0]}
@@ -100,6 +101,17 @@ def frame_at(video, t):
     ok, frame = cap.read()
     cap.release()
     return frame if ok else None
+
+
+def write_poster(video, t, dst):
+    """Кадр-превью для <video poster> и карточек сайта (WEB_WIDTH, JPEG)."""
+    f = frame_at(video, t)
+    if f is None:
+        return None
+    h, w = f.shape[:2]
+    f = cv2.resize(f, (WEB_WIDTH, int(h * WEB_WIDTH / w)), interpolation=cv2.INTER_AREA)
+    cv2.imwrite(str(dst), f, [cv2.IMWRITE_JPEG_QUALITY, 82])
+    return dst
 
 
 def video_meta(path):
@@ -238,7 +250,7 @@ def main():
     args = ap.parse_args()
     pub = Path(args.site) / "public"
     for d in ("data", "media/annotated", "media/examples", "media/failures", "media/heatmaps",
-              "media/trajectories", "media/eda"):
+              "media/trajectories", "media/eda", "media/posters"):
         (pub / d).mkdir(parents=True, exist_ok=True)
     preds = json.loads((ROOT / "predictions_samples.json").read_text(encoding="utf-8"))
     shutil.copy2(ROOT / "predictions_samples.json", pub / "data" / "predictions_samples.json")
@@ -265,7 +277,8 @@ def main():
                  f"yellow {phases.get('yellow', '—')} s. Events: "
                  + (", ".join(f"{k} {n}" for k, n in sorted(counts.items())) or "none") + ".")
         samples["videos"][v.name] = dict(meta, lighting=LIGHTING.get(v.stem, ""),
-                                         annotated_video=f"media/annotated/{v.stem}.mp4", notes=notes)
+                                         annotated_video=f"media/annotated/{v.stem}.mp4",
+                                         poster=f"media/posters/{v.stem}.jpg", notes=notes)
         c, d = counts_and_density(obs, meta["duration"])
         eda["counts_over_time"][v.name], eda["density"][v.name] = c, d
         base = frame_at(v, 5.0)
@@ -281,6 +294,7 @@ def main():
             src = ROOT / "debug" / f"{v.stem}.debug.mp4"
             if src.exists():
                 encode(src, pub / "media" / "annotated" / f"{v.stem}.mp4")
+                write_poster(src, POSTER_AT_SEC, pub / "media" / "posters" / f"{v.stem}.jpg")
             else:
                 print(f"   нет {src} — сначала tools/visualize_debug.py")
 
@@ -304,10 +318,12 @@ def main():
         s, e, _ = match[0]
         clip_start, clip_len = max(0.0, s - 2.0), min(e - s + 4.0, 20.0)
         if not args.skip_video:
-            encode(ROOT / "debug" / f"{Path(video).stem}.debug.mp4", pub / "media" / "examples" / f"{label}.mp4",
-                   start=clip_start, duration=clip_len)
+            debug = ROOT / "debug" / f"{Path(video).stem}.debug.mp4"
+            encode(debug, pub / "media" / "examples" / f"{label}.mp4", start=clip_start, duration=clip_len)
+            write_poster(debug, (s + e) / 2 if e - s < 16 else s + 2, pub / "media" / "posters" / f"ex_{label}.jpg")
         examples.append({"label": label, "video": video, "start": s, "end": e,
-                         "media": f"media/examples/{label}.mp4", "caption": caption})
+                         "media": f"media/examples/{label}.mp4", "poster": f"media/posters/ex_{label}.jpg",
+                         "caption": caption})
     failures = []
     for i, (title, video, t, text) in enumerate(FAILURES, 1):
         f = frame_at(ROOT / "debug" / f"{Path(video).stem}.debug.mp4", t)
