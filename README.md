@@ -178,9 +178,9 @@ Team **SoWeNeedAName**:
 
 | Member | Role | What they did | Links |
 |---|---|---|---|
-| Shaxzod Kalandarov | Captain | to be added | [GitHub](https://github.com/Roicalus) |
-| Aleksandr Polyakov | to be added | to be added | to be added |
-| Yana Semianiuta | to be added | to be added | to be added |
+| Shaxzod Kalandarov | Captain · ML pipeline and Part B | Detection and tracking: YOLO11s / YOLO11n with ByteTrack, frame sampling, track stitching; Part B accident-risk estimator: closest approach, required deceleration, calibration on normal traffic; Runtime and the submission: reader and detector threads, time guards, determinism, run_submission.py compatibility; Repository, weights, Dockerfile and README; team coordination | [GitHub](https://github.com/Roicalus) · [LinkedIn](https://www.linkedin.com/in/shakhzod-kalandarov-71a9293b9/) |
+| Aleksandr Polyakov | Scene understanding and event rules | Scene zones of the junction and their alignment to every recording (CLAHE + SIFT homography, reference bank); Traffic-light reader: lit-section classification, occlusion handling, phase smoothing; Event rules for the six submitted classes and segment post-processing; Unit tests for alignment, rules and risk; ablations on the sample videos | [GitHub](https://github.com/justm1x) · [LinkedIn](https://www.linkedin.com/in/aleksandr-polyakov-07142b43a) |
+| Yana Semianiuta | Website, live demo and visual analysis | Team website: design, results pages, dashboard, interactive timelines and charts; Live demo: Hugging Face Space (Gradio, ZeroGPU with CPU fallback) and its connection to the site; Annotated video rendering and the site export of samples, heatmaps and trajectories; EDA of the sample videos and the technical report | [GitHub](https://github.com/yanasemianiuta) · [LinkedIn](https://www.linkedin.com/in/yana-semianiuta) |
 
 ## 6. Repository layout
 
