@@ -31,6 +31,13 @@ READ_AHEAD = 4          # кадров в очереди читателя (4K BG
 WARMUP_IMGSZ = 1280     # как в run_tracker: прогрев на том же размере входа
 
 
+# Верх кадра не детектируем: только полоса над самой верхней зоной сцены
+# (проезжая часть начинается на y = 91 из 2160 опорного кадра). Раньше было
+# 18 %, и под обрезку уходили дальние полосы, остановка и 69 % зоны перед
+# очередью. Part B берёт ту же константу.
+CROP_TOP_FRAC = 0.04
+
+
 def _frame_reader(cap, stride_box, q, stop):
     """Поток-читатель: декодирует видео и кладёт в очередь каждый
     stride_box[0]-й кадр. Декодирование 4K H.264 на CPU — главный расход
@@ -100,7 +107,7 @@ def set_device(device) -> None:
 
 
 def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
-                 tracker=DEFAULT_TRACKER, crop_top_frac=0.18, device=None,
+                 tracker=DEFAULT_TRACKER, crop_top_frac=None, device=None,
                  on_frame=None, time_budget_sec=None, max_stride=6, half=None):
     """Гоняет YOLO+ByteTrack по видео и возвращает (meta, records) в памяти.
 
@@ -151,6 +158,7 @@ def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
     n_frames_total = int(cap_meta.get(cv2.CAP_PROP_FRAME_COUNT))
     cap_meta.release()
 
+    crop_top_frac = CROP_TOP_FRAC if crop_top_frac is None else crop_top_frac
     y_offset = int(height * crop_top_frac)
 
     records = []
@@ -269,7 +277,7 @@ def main():
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--conf", type=float, default=0.1)
     ap.add_argument("--tracker", default=DEFAULT_TRACKER)
-    ap.add_argument("--crop-top-frac", type=float, default=0.18)
+    ap.add_argument("--crop-top-frac", type=float, default=CROP_TOP_FRAC)
     ap.add_argument("--out", default=None)
     ap.add_argument("--save-video", action="store_true")
     ap.add_argument("--preview-width", type=int, default=1280)

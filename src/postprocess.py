@@ -14,6 +14,8 @@ red_light — 2-4 с, и склейка соседних проездов раз
 """
 from __future__ import annotations
 
+import math
+
 # class -> (merge_gap_sec, min_duration_sec)
 CLASS_POST: dict[str, tuple[float, float]] = {
     "congestion":          (3.0, 5.0),
@@ -33,6 +35,9 @@ CLASS_POST: dict[str, tuple[float, float]] = {
     "curb_mount":          (1.0, 0.3),   # диагностика, не отправляется
 }
 DEFAULT_POST = (0.5, 0.3)
+
+
+EDGE_SNAP_SEC = 1.0   # событие ближе к краю ролика — продолжается за край: 0 / duration (как в разметке)
 
 
 def postprocess(events, duration: float | None = None, classes=None,
@@ -59,5 +64,13 @@ def postprocess(events, duration: float | None = None, classes=None,
                 merged[-1][1] = max(merged[-1][1], e)
             else:
                 merged.append([s, e])
-        out += [[round(s, 2), round(e, 2), lbl] for s, e in merged if e - s >= min_dur]
+        for s, e in merged:
+            if e - s < min_dur:
+                continue
+            s = 0.0 if s <= EDGE_SNAP_SEC else round(s, 2)
+            if duration is not None and e >= duration - EDGE_SNAP_SEC:
+                e = math.floor(duration * 100) / 100     # вниз: после округления не больше duration
+            else:
+                e = round(e, 2)
+            out.append([s, e, lbl])
     return sorted(out)

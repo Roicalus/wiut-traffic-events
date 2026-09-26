@@ -363,3 +363,12 @@ def test_person_track_handed_to_a_car_is_not_jaywalking():
     recs += track(7, 2, lambda t: (road[0] + 40 * (t - 6), road[1]), 6, 16, w=300, h=200)  # тот же id — машина
     ev = events_of(recs, "jaywalking")
     assert ev == [], ev
+
+
+def test_events_at_the_edges_of_the_video_snap_to_0_and_duration():
+    """Как в разметке: событие, идущее до конца ролика, кончается на duration;
+    после округления конец не больше duration (иначе evaluate.py его отбросит)."""
+    out = postprocess([[0.4, 12.0, "stopped_vehicle"], [300.0, 317.4, "jaywalking"]], duration=317.817)
+    assert [0.0, 12.0, "stopped_vehicle"] in out
+    assert [300.0, 317.81, "jaywalking"] in out
+    assert all(e <= 317.817 for _, e, _ in out)
