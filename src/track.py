@@ -1,10 +1,10 @@
-"""Трекинг машин/людей на видео с камеры: YOLO + ByteTrack.
+"""Tracking vehicles/people in camera video: YOLO + ByteTrack.
 
-run_tracker() — переиспользуемая функция без файлового I/O: её вызывает
-pipeline.extract() (из solution.detect_events()). CLI (main()) — только для локальной отладки
-одного видео (пишет JSON и, опционально, превью с боксами на диск).
+run_tracker() is a reusable function with no file I/O: it is called by
+pipeline.extract() (from solution.detect_events()). The CLI (main()) is only for local debugging
+of a single video (writes JSON and, optionally, a preview with boxes to disk).
 
-Классы COCO: 0 person, 1 bicycle, 2 car, 3 motorcycle, 5 bus, 7 truck
+COCO classes: 0 person, 1 bicycle, 2 car, 3 motorcycle, 5 bus, 7 truck
 """
 import argparse
 import json
@@ -21,29 +21,29 @@ COCO_NAMES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7:
 
 DEFAULT_MODEL = str(Path(__file__).resolve().parent.parent / "weights" / "yolo11s.pt")
 DEFAULT_TRACKER = str(Path(__file__).resolve().parent / "bytetrack_long.yaml")
-# оба пути абсолютные (считаются от расположения этого файла, не от cwd) —
-# так run_submission.py находит веса и кастомный трекер независимо от
-# того, из какой директории его запустили
+# both paths are absolute (resolved from this file's location, not from cwd) —
+# so run_submission.py finds the weights and the custom tracker regardless of
+# which directory it was launched from
 
 
 _DEVICE = None
-READ_AHEAD = 4          # кадров в очереди читателя (4K BGR ~ 25 МБ каждый)
-WARMUP_IMGSZ = 1280     # как в run_tracker: прогрев на том же размере входа
+READ_AHEAD = 4          # frames in the reader queue (4K BGR ~ 25 MB each)
+WARMUP_IMGSZ = 1280     # as in run_tracker: warm up at the same input size
 
 
-# Верх кадра не детектируем: только полоса над самой верхней зоной сцены
-# (проезжая часть начинается на y = 91 из 2160 опорного кадра). Раньше было
-# 18 %, и под обрезку уходили дальние полосы, остановка и 69 % зоны перед
-# очередью. Part B берёт ту же константу.
+# The top of the frame is not detected: only the strip above the topmost scene zone
+# (the roadway starts at y = 91 of 2160 in the reference frame). It used to be
+# 18 %, and the crop cut off the far lanes, the stop and 69 % of the zone in front of
+# the queue. Part B uses the same constant.
 CROP_TOP_FRAC = 0.04
 
 
 def _frame_reader(cap, stride_box, q, stop):
-    """Поток-читатель: декодирует видео и кладёт в очередь каждый
-    stride_box[0]-й кадр. Декодирование 4K H.264 на CPU — главный расход
-    времени, и в отдельном потоке оно идёт параллельно с детектором на GPU
-    (cv2 и torch отпускают GIL). Порядок кадров тот же, результат не
-    зависит от скорости потоков."""
+    """Reader thread: decodes the video and puts every
+    stride_box[0]-th frame into the queue. Decoding 4K H.264 on the CPU is the main
+    time cost, and in a separate thread it runs in parallel with the detector on the GPU
+    (cv2 and torch release the GIL). Frame order is unchanged, the result does not
+    depend on thread speed."""
     idx = -1
     try:
         while not stop.is_set() and cap.grab():
@@ -64,17 +64,17 @@ def _frame_reader(cap, stride_box, q, stop):
 
 
 def _pick_device():
-    """0 (первая CUDA-карта), если она РЕАЛЬНО считает, иначе "cpu".
+    """0 (the first CUDA card) if it ACTUALLY computes, otherwise "cpu".
 
-    torch.cuda.is_available() бывает True, хотя ядра под эту карту в сборке
-    torch нет (например, RTX 50xx / sm_120 со сборкой cu121): тогда падение
-    случается только при первом вызове модели. Поэтому пробуем выполнить
-    крошечную операцию на GPU и при ошибке откатываемся на CPU.
+    torch.cuda.is_available() can be True even though the torch build has no kernels
+    for this card (e.g. RTX 50xx / sm_120 with a cu121 build): the failure then
+    happens only on the first model call. So we try to run a
+    tiny operation on the GPU and fall back to the CPU on error.
     """
     global _DEVICE
     if _DEVICE is not None:
         return _DEVICE
-    forced = os.environ.get("WIUT_DEVICE")      # демо на ZeroGPU: при импорте CUDA ещё нет
+    forced = os.environ.get("WIUT_DEVICE")      # demo on ZeroGPU: CUDA is not there yet at import time
     if forced:
         _DEVICE = int(forced) if forced.isdigit() else forced
         return _DEVICE
@@ -84,24 +84,24 @@ def _pick_device():
         _DEVICE = "cpu"
         return _DEVICE
     _DEVICE = "cpu"
-    # is_available() бывает True при device_count() == 0 (CUDA_VISIBLE_DEVICES="",
-    # сломанный драйвер) — тогда ultralytics падает на device=0
+    # is_available() can be True with device_count() == 0 (CUDA_VISIBLE_DEVICES="",
+    # broken driver) — then ultralytics fails on device=0
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
         try:
             float((torch.ones(8, device="cuda") * 2).sum().item())
             _DEVICE = 0
         except Exception as exc:
-            print("WARNING: CUDA есть, но не работает с этой сборкой torch "
-                  f"({str(exc).splitlines()[0]}). Работаю на CPU. Для RTX 50xx поставьте torch "
-                  "с cu128: pip install torch torchvision --index-url "
+            print("WARNING: CUDA is present but does not work with this torch build "
+                  f"({str(exc).splitlines()[0]}). Running on CPU. For RTX 50xx install torch "
+                  "with cu128: pip install torch torchvision --index-url "
                   "https://download.pytorch.org/whl/cu128")
     return _DEVICE
 
 
 def set_device(device) -> None:
-    """Переключить устройство для всех моделей ("cpu" или номер GPU). Нужно
-    демо на ZeroGPU: видеокарта есть только внутри @spaces.GPU-вызова.
-    ultralytics сам пересоздаёт предиктор, когда меняется device."""
+    """Switch the device for all models ("cpu" or a GPU index). Needed by
+    the ZeroGPU demo: the GPU exists only inside an @spaces.GPU call.
+    ultralytics recreates the predictor itself when the device changes."""
     global _DEVICE
     _DEVICE = device
 
@@ -109,38 +109,38 @@ def set_device(device) -> None:
 def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
                  tracker=DEFAULT_TRACKER, crop_top_frac=None, device=None,
                  on_frame=None, time_budget_sec=None, max_stride=6, half=None):
-    """Гоняет YOLO+ByteTrack по видео и возвращает (meta, records) в памяти.
+    """Runs YOLO+ByteTrack over a video and returns (meta, records) in memory.
 
     Args:
-        video_path: путь к .mp4.
-        model: уже загруженный ultralytics.YOLO (переиспользуйте между
-            видео — загрузка весов не бесплатна); если None, грузится
-            DEFAULT_MODEL один раз внутри вызова.
-        on_frame: опциональный callback(frame_bgr_cropped, t_sec, result) —
-            вызывается на каждом обработанном кадре. Только для дев-нужд
-            (light_state/obstacle_fire/превью); RiskEstimator НЕ должен переиспользовать
-            этот проход — ему нужен собственный каузальный проход по
-            кадрам, см. src/risk.py.
+        video_path: path to the .mp4.
+        model: an already loaded ultralytics.YOLO (reuse it across
+            videos — loading weights is not free); if None,
+            DEFAULT_MODEL is loaded once inside the call.
+        on_frame: optional callback(frame_bgr_cropped, t_sec, result) —
+            called on every processed frame. For dev purposes only
+            (light_state/obstacle_fire/preview); RiskEstimator must NOT reuse
+            this pass — it needs its own causal pass over the
+            frames, see src/risk.py.
 
-        time_budget_sec: если задано — предохранитель: каждые 50
-            обработанных кадров проецируем время всего прохода, и если оно
-            вылезает за бюджет, увеличиваем stride (до max_stride). Лучше
-            чуть более редкий трекинг, чем видео, зачтённое пустым.
-        half: fp16-инференс (по умолчанию — да, если есть CUDA; на T4 это
-            ~1.5-2x к скорости YOLO).
-        conf: порог детектора. Низкий намеренно: ByteTrack сам делит
-            детекции на уверенные (>= track_high_thresh, новые треки — только
-            от new_track_thresh=0.6) и слабые (>= track_low_thresh=0.1),
-            которыми лишь продлевает существующие треки через перекрытия.
-            При conf=0.35 слабые до трекера не доходили: курьер на мопеде
-            (C3896, 20-27 с) рвался на 3 трека с дырой 2 с; с 0.1 — медиана
-            длины трека 7.5 -> 9.7 с, покрытие мопеда 43 -> 61 из 80 кадров.
+        time_budget_sec: if set, acts as a safety guard: every 50
+            processed frames we project the time of the whole pass, and if it
+            exceeds the budget, increase stride (up to max_stride). Slightly
+            sparser tracking is better than a video scored as empty.
+        half: fp16 inference (default: yes if CUDA is available; on a T4 this is
+            ~1.5-2x YOLO speed).
+        conf: detector threshold. Deliberately low: ByteTrack itself splits
+            detections into confident ones (>= track_high_thresh, new tracks only
+            from new_track_thresh=0.6) and weak ones (>= track_low_thresh=0.1),
+            which only extend existing tracks via overlap.
+            With conf=0.35 the weak ones never reached the tracker: a courier on a moped
+            (C3896, 20-27 s) was split into 3 tracks with a 2 s gap; with 0.1 the median
+            track length went 7.5 -> 9.7 s, moped coverage 43 -> 61 of 80 frames.
 
     Returns:
-        meta: dict с video/fps/width/height/n_frames_total/stride/...
-        records: list of dict с полями frame, t_sec, track_id, cls,
-            cls_name, conf, x1, y1, x2, y2 (координаты в исходном
-            разрешении видео).
+        meta: dict with video/fps/width/height/n_frames_total/stride/...
+        records: list of dict with fields frame, t_sec, track_id, cls,
+            cls_name, conf, x1, y1, x2, y2 (coordinates in the original
+            video resolution).
     """
     video_path = Path(video_path)
     if model is None:
@@ -163,7 +163,7 @@ def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
 
     records = []
     cap = cv2.VideoCapture(str(video_path))
-    stride_box = [stride]          # читатель смотрит сюда: предохранитель может поднять stride
+    stride_box = [stride]          # the reader looks here: the safety guard may raise stride
     frames_q: queue.Queue = queue.Queue(maxsize=READ_AHEAD)
     stop = threading.Event()
     reader = threading.Thread(target=_frame_reader, args=(cap, stride_box, frames_q, stop), daemon=True)
@@ -173,9 +173,9 @@ def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
     first_call = True
     stride_changes = []
     t_start = time.perf_counter()
-    # Первые кадры на GPU медленные (инициализация CUDA, подбор ядер cuDNN):
-    # по ним прогноз завышается в 2-3 раза. Скорость меряем только после
-    # WARMUP_FRAMES обработанных кадров, а решения принимаем не раньше
+    # The first frames on the GPU are slow (CUDA initialisation, cuDNN kernel selection):
+    # they inflate the projection 2-3x. Speed is measured only after
+    # WARMUP_FRAMES processed frames, and decisions are made no earlier than
     # GUARD_MIN_FRAMES.
     WARMUP_FRAMES, GUARD_MIN_FRAMES = 30, 150
     t_warm, f_warm = None, None
@@ -188,10 +188,10 @@ def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
             frame_idx, frame = item
 
             cropped = frame[y_offset:, :]
-            # persist=False на ПЕРВОМ кадре видео пересоздаёт трекеры: модель
-            # кэшируется между видео, и с persist=True всегда состояние
-            # ByteTrack (активные треки, счётчик id) протекало бы из
-            # предыдущего ролика в следующий.
+            # persist=False on the FIRST frame of a video recreates the trackers: the model
+            # is cached across videos, and with persist=True always, the
+            # ByteTrack state (active tracks, id counter) would leak from the
+            # previous clip into the next one.
             r = model.track(
                 cropped,
                 persist=not first_call,
@@ -213,14 +213,14 @@ def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
             if (time_budget_sec and t_warm is not None and n_processed >= GUARD_MIN_FRAMES
                     and n_processed % 50 == 0 and stride < max_stride and n_frames_total):
                 now = time.perf_counter()
-                rate = (now - t_warm) / max(frame_idx - f_warm, 1)   # сек на кадр видео после разгона
+                rate = (now - t_warm) / max(frame_idx - f_warm, 1)   # seconds per video frame after warm-up
                 projected = (now - t_start) + rate * (n_frames_total - frame_idx - 1)
                 if projected > time_budget_sec:
                     stride += 1
                     stride_box[0] = stride
                     stride_changes.append((round(t_sec, 1), stride))
-                    print(f"[track] прогноз {projected:.0f}s > бюджета {time_budget_sec:.0f}s "
-                          f"-> stride={stride} с t={t_sec:.0f}s", flush=True)
+                    print(f"[track] projection {projected:.0f}s > budget {time_budget_sec:.0f}s "
+                          f"-> stride={stride} from t={t_sec:.0f}s", flush=True)
 
             if r.boxes is not None and r.boxes.id is not None:
                 xyxy = r.boxes.xyxy.cpu().numpy()
@@ -242,7 +242,7 @@ def run_tracker(video_path, model=None, imgsz=1280, stride=3, conf=0.1,
             if on_frame is not None:
                 on_frame(cropped, t_sec, r)
     finally:
-        stop.set()                  # читатель мог остаться ждать места в очереди
+        stop.set()                  # the reader may still be waiting for room in the queue
         while reader.is_alive():
             try:
                 frames_q.get(timeout=0.1)
@@ -317,10 +317,10 @@ def main():
 
     out_path.write_text(json.dumps({"meta": meta, "tracks": records}, indent=1))
     max_id = max((r["track_id"] for r in records), default=0)
-    print(f"Готово: {len(records)} записей за {elapsed:.0f}с, максимальный track_id={max_id}")
+    print(f"Done: {len(records)} records in {elapsed:.0f}s, max track_id={max_id}")
     print(f"JSON: {out_path}")
     if writer is not None:
-        print(f"Превью: {out_path.with_suffix('.preview.mp4')}")
+        print(f"Preview: {out_path.with_suffix('.preview.mp4')}")
 
 
 if __name__ == "__main__":

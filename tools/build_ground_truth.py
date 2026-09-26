@@ -1,10 +1,10 @@
 """
-build_ground_truth.py — собирает per-video файлы из labels/*.json (формат
-label_tool.py) в один ground_truth.json в формате, который ждёт evaluate.py:
+build_ground_truth.py — merges the per-video files from labels/*.json (label_tool.py
+format) into a single ground_truth.json in the format evaluate.py expects:
 
 {"video.mp4": {"duration": .., "fps": .., "events": [[s, e, label], ...]}, ...}
 
-Запуск:
+Usage:
     python build_ground_truth.py --labels labels --out ground_truth.json
 """
 import argparse
@@ -31,7 +31,7 @@ def main():
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    print(f"Собрано {len(result)} видео в {args.out}")
+    print(f"Merged {len(result)} videos into {args.out}")
 
 
 if __name__ == "__main__":

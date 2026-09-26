@@ -1,23 +1,23 @@
-"""export_site.py — данные и медиа для сайта команды из артефактов репозитория.
+"""export_site.py — data and media for the team website, built from the repository artifacts.
 
-Всё на сайте о сэмплах получено этим скриптом из того же, что видит жюри:
-predictions_samples.json (сабмит), кэш прохода Part A (tools/dev_loop.py) и
-видео с разметкой (tools/visualize_debug.py). Ничего не рисуется руками.
+Everything on the site about the samples is produced by this script from what the jury sees:
+predictions_samples.json (the submission), the Part A pass cache (tools/dev_loop.py) and
+the annotated videos (tools/visualize_debug.py). Nothing is drawn by hand.
 
-    python tools/dev_loop.py --videos samples            # кэш, если его нет
-    python tools/visualize_debug.py --video samples/X.MP4 --predictions predictions_samples.json   # для каждого
+    python tools/dev_loop.py --videos samples            # cache, if missing
+    python tools/visualize_debug.py --video samples/X.MP4 --predictions predictions_samples.json   # for each one
     python tools/export_site.py --site ../site
 
-Пишет в <site>/public:
-  data/predictions_samples.json   копия файла сабмита
-  data/samples.json               параметры роликов, освещение, смещение камеры, светофор,
-                                  примеры классов, неудачные случаи
-  data/eda.json                   объекты по классам во времени, плотность потока, рисунки
-  media/annotated/*.mp4           размеченные видео (H.264, 960 px, faststart)
-  media/examples/*.mp4            клипы-примеры классов
-  media/failures/*.jpg            кадры неудачных случаев
+Writes to <site>/public:
+  data/predictions_samples.json   copy of the submission file
+  data/samples.json               clip parameters, lighting, camera shift, traffic light,
+                                  class examples, failure cases
+  data/eda.json                   objects per class over time, flow density, figures
+  media/annotated/*.mp4           annotated videos (H.264, 960 px, faststart)
+  media/examples/*.mp4            class example clips
+  media/failures/*.jpg            failure-case frames
   media/heatmaps, trajectories, eda/*.png
-  media/hero.mp4, data/hero.json  фрагмент C3896 без разметки и наши треки на нём (главная)
+  media/hero.mp4, data/hero.json  unannotated C3896 excerpt and our tracks on it (home page)
 """
 from __future__ import annotations
 
@@ -40,13 +40,13 @@ from src.pipeline import get_zones, load_obs, reference_view  # noqa: E402
 from src.rules import VEHICLE_CLASSES, annotate, group_by_object  # noqa: E402
 
 WEB_WIDTH = 960
-POSTER_AT_SEC = 20.0          # кадр-превью размеченного ролика
-HERO = ("C3896.MP4", 44.0, 84.0)  # фрагмент для главной: разворот, остановка, проезд на красный
+POSTER_AT_SEC = 20.0          # poster frame of the annotated clip
+HERO = ("C3896.MP4", 44.0, 84.0)  # excerpt for the home page: U-turn, stop, red-light run
 BIN_SEC = 5.0
 LIGHTING = {"C3896": "day, direct sun", "C3897": "day, direct sun", "C3902": "sunset", "C3905": "dusk, headlights on"}
 SERIES = {"car": [2], "bus": [5], "truck": [7], "motorcycle / bicycle": [1, 3], "person": [0]}
 
-# Примеры классов: реальные события из predictions_samples.json, проверенные глазами в дебаг-видео.
+# Class examples: real events from predictions_samples.json, checked by eye in the debug videos.
 EXAMPLES = [
     ("illegal_turn", "C3896.MP4", 49.6, "A car from the main road drives deep into the junction and makes "
      "a U-shaped turn back onto the lower street: the forbidden route (the allowed right turn is right after "
@@ -62,7 +62,7 @@ EXAMPLES = [
      "zebra, and waits there for the green instead of behind the line."),
 ]
 
-# Неудачные и спорные случаи — честно, с объяснением.
+# Failure and borderline cases — honestly, with an explanation.
 FAILURES = [
     ("False alarm: pedestrian on the island", "C3902.MP4", 33.6,
      "Part B raises a 0.4 s alarm (risk 0.50) for a pedestrian standing on the traffic island while a car passes. "
@@ -112,7 +112,7 @@ def frame_at(video, t):
 
 
 def write_poster(video, t, dst):
-    """Кадр-превью для <video poster> и карточек сайта (WEB_WIDTH, JPEG)."""
+    """Poster frame for <video poster> and the site cards (WEB_WIDTH, JPEG)."""
     f = frame_at(video, t)
     if f is None:
         return None
@@ -133,14 +133,14 @@ def video_meta(path):
 
 
 def light_phases(samples):
-    """Длительности фаз светофора (с) по сглаженному ряду состояний."""
+    """Traffic-light phase durations (s) from the smoothed state series."""
     phases, cur, t0 = defaultdict(list), None, None
     for t, s in samples or []:
         if s != cur:
             if cur in ("red", "green", "yellow") and t0 is not None:
                 phases[cur].append(t - t0)
             cur, t0 = s, t
-    # первая и последняя фазы обрезаны началом и концом ролика — не считаем
+    # the first and last phases are cut off by the start and end of the clip — not counted
     return {k: round(float(np.median(v[1:])) if len(v) > 1 else float(v[0]), 1) for k, v in phases.items() if v}
 
 
@@ -171,8 +171,8 @@ def counts_and_density(obs, duration):
 
 
 def heatmap_and_trajectories(obs, base, out_heat, out_traj):
-    """Тепловая карта движения (машины — тёплая, пешеходы — голубая) и траектории
-    с цветом по направлению движения, на кадре ролика."""
+    """Motion heatmap (vehicles — warm, pedestrians — light blue) and trajectories
+    coloured by direction of motion, on a frame of the clip."""
     h, w = base.shape[:2]
     k = WEB_WIDTH / w
     small = cv2.resize(base, (WEB_WIDTH, int(h * k)), interpolation=cv2.INTER_AREA)
@@ -204,7 +204,7 @@ def heatmap_and_trajectories(obs, base, out_heat, out_traj):
             col = cv2.applyColorMap((a * 255).astype(np.uint8), cmap).astype(np.float32)
             out = out * (1 - a[..., None] * 0.85) + col * (a[..., None] * 0.85)
     cv2.imwrite(str(out_heat), out.astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 88])
-    # компас: цвет = направление движения
+    # compass: colour = direction of motion
     cx, cy, r = WEB_WIDTH - 60, 60, 38
     for a in range(0, 360, 10):
         hue = int(a / 2)
@@ -234,7 +234,7 @@ def light_cycle_figure(light_by_video, out):
 
 
 def alignment_figure(videos, out):
-    """Зоны сцены, совмещённые с каждой записью: крупно светофор и переходы."""
+    """Scene zones aligned to each recording: close-ups of the traffic light and crossings."""
     zones = get_zones()
     tiles = []
     for v in videos:
@@ -251,9 +251,9 @@ def alignment_figure(videos, out):
 
 
 def hero_clip(pub, videos_dir):
-    """Главная сайта: фрагмент исходного C3896 без разметки и треки нашего прохода Part A на нём
-    (рамки рисует сайт поверх видео, синхронно с его временем). Объекты событий — из
-    compute_events_debug, те же, что подсвечивает visualize_debug."""
+    """Site home page: an unannotated excerpt of the original C3896 and the tracks of our Part A pass on it
+    (the site draws the boxes over the video, in sync with its time). Event objects come from
+    compute_events_debug, the same ones visualize_debug highlights."""
     import solution
     from src.rules import compute_events_debug
     video, start, end = HERO
@@ -280,9 +280,9 @@ def hero_clip(pub, videos_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--site", required=True, help="папка сайта (public/ внутри)")
+    ap.add_argument("--site", required=True, help="site folder (with public/ inside)")
     ap.add_argument("--videos", default=str(ROOT / "samples"))
-    ap.add_argument("--skip-video", action="store_true", help="не перекодировать видео (только данные)")
+    ap.add_argument("--skip-video", action="store_true", help="do not re-encode videos (data only)")
     args = ap.parse_args()
     pub = Path(args.site) / "public"
     for d in ("data", "media/annotated", "media/examples", "media/failures", "media/heatmaps",
@@ -299,7 +299,7 @@ def main():
     for v in videos:
         print(f"[{v.name}]", flush=True)
         obs = load_obs(ROOT / "cache" / f"{v.name}.obs.pkl.gz")
-        reference_view(obs)                    # stitched_id в записях, как у правил
+        reference_view(obs)                    # stitched_id in the records, as the rules use
         meta = video_meta(v)
         _, rep = align.aligned_zones(v, get_zones())
         phases = light_phases(obs.light_samples)
@@ -333,7 +333,7 @@ def main():
                 encode(src, pub / "media" / "annotated" / f"{v.stem}.mp4")
                 write_poster(src, POSTER_AT_SEC, pub / "media" / "posters" / f"{v.stem}.jpg")
             else:
-                print(f"   нет {src} — сначала tools/visualize_debug.py")
+                print(f"   {src} missing — run tools/visualize_debug.py first")
 
     light_cycle_figure(light_by_video, pub / "media" / "eda" / "light_cycle.png")
     alignment_figure(videos, pub / "media" / "eda" / "alignment.jpg")
@@ -350,7 +350,7 @@ def main():
     for label, video, start, caption in EXAMPLES:
         match = [e for e in preds["videos"][video]["events"] if e[2] == label and abs(e[0] - start) < 3]
         if not match:
-            print(f"   пример {label} {video} {start}: такого события в predictions нет — пропускаю")
+            print(f"   example {label} {video} {start}: no such event in predictions — skipping")
             continue
         s, e, _ = match[0]
         clip_start, clip_len = max(0.0, s - 2.0), min(e - s + 4.0, 20.0)
@@ -372,7 +372,7 @@ def main():
     eda["findings"] = json.loads((ROOT / "docs" / "eda_findings.json").read_text(encoding="utf-8"))
     (pub / "data" / "samples.json").write_text(json.dumps(samples, ensure_ascii=False, indent=1), encoding="utf-8")
     (pub / "data" / "eda.json").write_text(json.dumps(eda, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("Готово:", pub)
+    print("Done:", pub)
 
 
 if __name__ == "__main__":

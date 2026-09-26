@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Веса детекторов (Ultralytics YOLO11, COCO, AGPL-3.0). Они уже лежат в
-# репозитории; скрипт нужен, только если их нет: запускается один раз, с
-# интернетом, до офлайн-прогона. Хэши — тех самых файлов, на которых
-# получен predictions_samples.json.
+# Detector weights (Ultralytics YOLO11, COCO, AGPL-3.0). They are already in the
+# repository; the script is needed only if they are missing: run it once, with
+# internet access, before the offline run. The hashes are of the exact files that
+# produced predictions_samples.json.
 set -euo pipefail
 cd "$(dirname "$0")"
 BASE=https://github.com/ultralytics/assets/releases/download/v8.3.0
@@ -12,7 +12,7 @@ declare -A SHA=(
 )
 for f in yolo11s.pt yolo11n.pt; do
   if [ ! -s "$f" ]; then
-    echo ">> скачиваю $f"
+    echo ">> downloading $f"
     curl -fL --retry 3 -o "$f" "$BASE/$f"
   fi
   echo "${SHA[$f]}  $f" | sha256sum -c -

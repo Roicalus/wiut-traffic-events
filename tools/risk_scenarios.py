@@ -1,11 +1,11 @@
-"""risk_scenarios.py — проверка Part B (RiskScorer) на синтетических траекториях.
+"""risk_scenarios.py — tests Part B (RiskScorer) on synthetic trajectories.
 
-Сценарии с известным исходом: столкновение (контакт = рамки начинают
-пересекаться) или его нет. Детекции подаются с частотой инференса (15 Гц),
-с дрожанием рамок и пропусками детекций. Для каждого сценария — как в
-evaluate.py: есть ли аларм (score >= 0.5) с началом в [s - 10, s), время
-от начала аларма до контакта (TTA), пик риска; для безопасных — пик риска
-и число алармов (все ложные).
+Scenarios with a known outcome: a collision (contact = the boxes start to
+overlap) or none. Detections are fed at the inference rate (15 Hz),
+with box jitter and dropped detections. For each scenario, as in
+evaluate.py: whether there is an alarm (score >= 0.5) starting in [s - 10, s), the time
+from alarm start to contact (TTA), peak risk; for safe ones — peak risk
+and the number of alarms (all false).
 
     python tools/risk_scenarios.py
     python tools/risk_scenarios.py --set A_HIGH=2.0 --set BRAKING_FACTOR=0.8
@@ -21,9 +21,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import risk  # noqa: E402
 
-DT = 2 / 30.0                        # BASE_STRIDE = 2 при 30 fps
+DT = 2 / 30.0                        # BASE_STRIDE = 2 at 30 fps
 CAR, PED, BIKE = (300.0, 160.0), (60.0, 170.0), (110.0, 150.0)
-D = float(np.hypot(*CAR))            # диагональ машины, px; скорости — в D/с
+D = float(np.hypot(*CAR))            # car diagonal, px; speeds are in D/s
 THETA, W = 0.5, 10.0
 
 
@@ -69,12 +69,12 @@ def alarms(curve):
 
 
 def lin(p0, v, t0=0.0):
-    """Равномерно: из p0 со скоростью v (px/с), стартует в t0."""
+    """Uniform motion: from p0 at velocity v (px/s), starting at t0."""
     return lambda t: (p0[0] + v[0] * max(t - t0, 0), p0[1] + v[1] * max(t - t0, 0))
 
 
 def braking(p0, v, t_brake, decel):
-    """Едет со скоростью v, с t_brake тормозит с замедлением decel (px/с^2) до нуля."""
+    """Moves at velocity v; from t_brake it brakes with deceleration decel (px/s^2) to a stop."""
     sp = float(np.hypot(*v))
     u = (v[0] / sp, v[1] / sp)
     t_stop = sp / decel
@@ -91,35 +91,35 @@ def braking(p0, v, t_brake, decel):
 
 def scenarios():
     """(name, crash?, objects, t_end)."""
-    M = (2000.0, 1300.0)                          # точка встречи
+    M = (2000.0, 1300.0)                          # meeting point
     out = []
-    for v in (1.0, 1.5, 2.0, 3.0):                # D/с; 1 D/с ~ 18 км/ч
-        # наезд сзади на стоящую машину без торможения
+    for v in (1.0, 1.5, 2.0, 3.0):                # D/s; 1 D/s ~ 18 km/h
+        # rear-end into a standing car without braking
         out.append((f"rear-end, {v} D/s, no braking", True,
                     [(1, 2, CAR, lambda t: M), (2, 2, CAR, lin((M[0] - 8 * D, M[1]), (v * D, 0)))], 12))
-        # удар сбоку на перекрёстке
+        # side impact at the junction
         tc = 4.0
         out.append((f"T-bone, {v} D/s", True,
                     [(1, 2, CAR, lin((M[0] - v * D * tc, M[1]), (v * D, 0))),
                      (2, 2, CAR, lin((M[0], M[1] - v * D * tc), (0, v * D)))], tc + 1))
-        # пешеход выходит перед машиной
+        # pedestrian steps out in front of the car
         out.append((f"pedestrian hit, car {v} D/s", True,
                     [(1, 2, CAR, lin((M[0] - v * D * tc, M[1]), (v * D, 0))),
                      (2, 0, PED, lin((M[0], M[1] - 180 * tc), (0, 180)))], tc + 1))
-    # в последний момент тормозит, но не успевает (частый сценарий реальной аварии)
+    # brakes at the last moment but too late (a common real-crash scenario)
     for v in (2.0, 3.0):
         x0 = M[0] - 8 * D
-        t_brake = (8 * D - 2.2 * D) / (v * D)       # увидел за ~2 корпуса
+        t_brake = (8 * D - 2.2 * D) / (v * D)       # noticed ~2 car lengths away
         out.append((f"rear-end, {v} D/s, late braking", True,
                     [(1, 2, CAR, lambda t: M), (2, 2, CAR, braking((x0, M[1]), (v * D, 0), t_brake, 0.6 * D))], 12))
-    # мотоцикл в бок машине
+    # motorcycle into the side of a car
     out.append(("motorcycle T-bone, 2 D/s", True,
                 [(1, 2, CAR, lin((M[0] - 2 * D * 4, M[1]), (2 * D, 0))),
                  (2, 3, BIKE, lin((M[0], M[1] - 2 * D * 4), (0, 2 * D)))], 5))
-    # --- безопасные
+    # --- safe ones
     x_q = M[0]
     for v in (1.0, 1.5, 2.0):
-        dec = 0.5 * D                                 # ~2.5 м/с^2, обычное торможение
+        dec = 0.5 * D                                 # ~2.5 m/s^2, normal braking
         t_stop = v * D / dec
         stop_gap = 1.2 * D
         x0 = x_q - stop_gap - v * D * t_stop / 2 - 1.0 * v * D
@@ -144,8 +144,8 @@ def scenarios():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--set", action="append", default=[], help="NAME=VALUE: параметр src/risk.py")
-    ap.add_argument("--seeds", type=int, default=5, help="прогонов шума на сценарий")
+    ap.add_argument("--set", action="append", default=[], help="NAME=VALUE: a src/risk.py parameter")
+    ap.add_argument("--seeds", type=int, default=5, help="noise runs per scenario")
     args = ap.parse_args()
     for kv in args.set:
         k, v = kv.split("=")
@@ -159,7 +159,7 @@ def main():
         for seed in range(args.seeds):
             curve, s = simulate(objs, t_end, seed=seed)
             if crash and s is None:
-                raise SystemExit(f"{name}: контакта нет — ошибка сценария")
+                raise SystemExit(f"{name}: no contact — scenario error")
             before = [(t, x) for t, x in curve if s is None or t < s]
             peak.append(max(x for _, x in before))
             runs = alarms(before)

@@ -1,14 +1,14 @@
-"""align_stress.py — насколько устойчиво совмещение зон к смещению камеры.
+"""align_stress.py — how robust zone alignment is to camera displacement.
 
-Реальные кадры сэмплов + синтетическое "другое положение камеры": сдвиг,
-поворот, масштаб, наклон (перспектива), перекрытие части кадра, размытие,
-шум, затемнение. Совмещение — ровно то, что в сабмите (src/align.estimate,
-с проверками правдоподобия). Ошибка — максимальный промах по углам зон
-light_roi, stop_line, crossing_far, crossing_near, px в 4K.
+Real sample frames + a synthetic "different camera position": shift,
+rotation, scale, tilt (perspective), occlusion of part of the frame, blur,
+noise, darkening. The alignment is exactly what the submission uses (src/align.estimate,
+with plausibility checks). Error — the maximum miss at the corners of the zones
+light_roi, stop_line, crossing_far, crossing_near, px in 4K.
 
-Честный режим (по умолчанию): у кадра видео X из банка опорных кадров
-убирается опорный кадр, снятый на X, — как для скрытого теста, которого в
-банке нет.
+Honest mode (default): for a frame of video X, the reference frame taken on X is
+removed from the reference-frame bank — as for the hidden test, which is not in
+the bank.
 
     python tools/align_stress.py --videos samples
 """
@@ -32,7 +32,7 @@ PROBE_ZONES = ("light_roi", "stop_line", "crossing_far", "crossing_near")
 
 
 def perturbations():
-    """(название, T 3x3 — истинное доп. смещение камеры, порча кадра | None)."""
+    """(name, T 3x3 — the true extra camera displacement, frame corruption | None)."""
     def aff(rot=0.0, scale=1.0, dx=0.0, dy=0.0):
         R = cv2.getRotationMatrix2D((W0 / 2, H0 / 2), rot, scale)
         R[:, 2] += (dx, dy)
@@ -55,22 +55,22 @@ def perturbations():
 
     I = np.eye(3)
     return [
-        ("как есть", I, None),
-        ("сдвиг 300x150", aff(dx=300, dy=150), None),
-        ("сдвиг 500x250", aff(dx=500, dy=250), None),
-        ("поворот 4°", aff(rot=4), None),
-        ("поворот 8°", aff(rot=8), None),
-        ("масштаб 0.8", aff(scale=0.8), None),
-        ("масштаб 1.25", aff(scale=1.25), None),
-        ("наклон 3%", tilt(0.03), None),
-        ("наклон 8%", tilt(0.08), None),
-        ("сдвиг+поворот+наклон", aff(rot=3, dx=250, dy=-120) @ tilt(0.04), None),
-        ("перекрыто 30%", I, occlude(0.3)),
-        ("размытие", I, lambda img: cv2.GaussianBlur(img, (0, 0), 4)),
-        ("шум", I, lambda img: np.clip(img + np.random.default_rng(0).normal(0, 20, img.shape), 0, 255)
+        ("as is", I, None),
+        ("shift 300x150", aff(dx=300, dy=150), None),
+        ("shift 500x250", aff(dx=500, dy=250), None),
+        ("rotate 4°", aff(rot=4), None),
+        ("rotate 8°", aff(rot=8), None),
+        ("scale 0.8", aff(scale=0.8), None),
+        ("scale 1.25", aff(scale=1.25), None),
+        ("tilt 3%", tilt(0.03), None),
+        ("tilt 8%", tilt(0.08), None),
+        ("shift+rotate+tilt", aff(rot=3, dx=250, dy=-120) @ tilt(0.04), None),
+        ("occluded 30%", I, occlude(0.3)),
+        ("blur", I, lambda img: cv2.GaussianBlur(img, (0, 0), 4)),
+        ("noise", I, lambda img: np.clip(img + np.random.default_rng(0).normal(0, 20, img.shape), 0, 255)
          .astype(np.uint8)),
-        ("темнее x2.5", I, gamma(2.5)),
-        ("светлее", I, gamma(0.5)),
+        ("darker x2.5", I, gamma(2.5)),
+        ("brighter", I, gamma(0.5)),
     ]
 
 
@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--videos", default=str(ROOT / "samples"))
     ap.add_argument("--frame", type=int, default=300)
     ap.add_argument("--with-own-reference", action="store_true",
-                    help="не убирать опорный кадр того же видео (нечестно, для сравнения)")
+                    help="do not remove the reference frame of the same video (dishonest, for comparison)")
     args = ap.parse_args()
     zones = get_zones()
     probe = np.vstack([zones[n] for n in PROBE_ZONES]).astype(np.float64)
@@ -92,11 +92,11 @@ def main():
         refs = refs_all if args.with_own_reference else [r for r in refs_all if r["video"] != v.name
                                                          or r["name"] == "main"]
         if v.name == refs_all[0]["video"] and not args.with_own_reference:
-            # видео основного опорного кадра: другой кадр того же ролика — честнее нельзя
+            # video of the main reference frame: a different frame of the same clip — the most honest possible
             frame = align.first_frame(v, args.frame + 3000)
         H_v, rep = align.estimate(frame, refs=refs)
         if H_v is None:
-            print(f"[{v.name}] базовое совмещение не удалось: {rep}")
+            print(f"[{v.name}] base alignment failed: {rep}")
             continue
         truth_v = cv2.perspectiveTransform(probe[None], H_v)[0]
         for name, T, spoil in perturbations():
@@ -111,16 +111,16 @@ def main():
                 err = float(np.abs(cv2.perspectiveTransform(probe[None], H)[0] - truth).max())
                 table[name].append((v.stem, err, f"{rep['model']}/{rep['ref']}"))
 
-    print(f"{'смещение':24s} " + "  ".join(f"{v.stem:>18s}" for v in videos))
+    print(f"{'displacement':24s} " + "  ".join(f"{v.stem:>18s}" for v in videos))
     for name, rows in table.items():
         cells = [f"{'—':>6s} {st:>11s}" if e is None else f"{e:6.1f} {st:>11s}" for _, e, st in rows]
         print(f"{name:24s} " + "  ".join(cells))
     errs = [e for rows in table.values() for _, e, _ in rows if e is not None]
     n = sum(len(r) for r in table.values())
-    print(f"\nсовмещено {len(errs)}/{n}, ошибка px: медиана {np.median(errs):.1f}, "
-          f"90% {np.percentile(errs, 90):.1f}, макс {max(errs):.1f}")
-    print("Ошибка — от базового совмещения того же кадра (оно само по себе точное: "
-          "см. tools/check_alignment.py).")
+    print(f"\naligned {len(errs)}/{n}, error px: median {np.median(errs):.1f}, "
+          f"90% {np.percentile(errs, 90):.1f}, max {max(errs):.1f}")
+    print("Error is relative to the base alignment of the same frame (which is itself accurate: "
+          "see tools/check_alignment.py).")
 
 
 if __name__ == "__main__":

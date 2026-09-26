@@ -1,19 +1,19 @@
 """
-rules.py — правила событий поверх сшитых треков (track.py -> stitch_tracks.py),
-зон сцены (zones.json, совмещённых с видео в align.py) и состояния светофора
-(light_state.py). Вызывается из pipeline.infer(); точка входа —
-compute_events() (сабмит) / compute_events_debug() (то же с id объектов).
-Отправляемые классы — solution.CLASSES, остальные правила экспериментальные.
+rules.py — event rules on top of stitched tracks (track.py -> stitch_tracks.py),
+scene zones (zones.json, aligned with the video in align.py) and the traffic-light state
+(light_state.py). Called from pipeline.infer(); the entry points are
+compute_events() (submission) / compute_events_debug() (the same, with object ids).
+The submitted classes are solution.CLASSES; the other rules are experimental.
 
-CLI main() — только для отладки на сохранённых JSON треков:
+CLI main() is for debugging only, on saved track JSON:
     python src/rules.py --tracks src/tracks/C3896.stitched.json --zones zones.json \
         --light src/light/C3896.json --out predictions/C3896.json
 
-Пороги подобраны по сэмплам (см. docs/CHANGES.md). Скорость нормируется на диагональ
-бокса объекта (грубая компенсация перспективы: у дальних машин те же
-пиксели/сек означают куда большую реальную скорость, чем у ближних), так
-что пороги — это "длины корпуса в секунду", не px/s. Калибруй по своей
-разметке:
+Thresholds were tuned on the samples (see docs/CHANGES.md). Speed is normalised by the
+object's box diagonal (a rough perspective compensation: for distant cars the same
+pixels/s mean a much higher real speed than for near ones), so the
+thresholds are "body lengths per second", not px/s. Calibrate against your own
+annotations:
     python evaluate.py --pred predictions.json --gt ground_truth.json --per-video
 """
 import argparse
@@ -53,16 +53,16 @@ def group_by_object(records):
     return groups
 
 
-# Точка, по которой объект "стоит" в зоне. Зоны размечены по асфальту, а
-# центр бокса у машины/человека висит над землёй и в перспективе камеры
-# сдвинут "дальше" от реального места — у пешехода на тротуаре центр
-# торса может уже попадать в roadway. Низ-центр бокса (колёса/ноги) —
-# правильная проекция на плоскость дороги. "center" — старое поведение.
+# The point at which an object "stands" in a zone. Zones are drawn on the asphalt, while
+# the box centre of a car/person hangs above the ground and, in the camera perspective, is
+# shifted "further" from the real position — for a pedestrian on the sidewalk the torso
+# centre may already fall into roadway. The bottom-centre of the box (wheels/feet) is the
+# correct projection onto the road plane. "center" is the old behaviour.
 ZONE_ANCHOR = "bottom"
-# Скорость считаем по смещению за окно, а не между соседними сэмплами:
-# при stride=3 (0.12 c) дрожание бокса на 2-3 px у дальней машины уже даёт
-# ~0.3 "корпуса/с" — как раз порог остановки, и стоящая машина "едет",
-# рвя stopped_vehicle/congestion на куски.
+# Speed is computed from the displacement over a window, not between adjacent samples:
+# with stride=3 (0.12 s) a 2-3 px box jitter on a distant car already gives
+# ~0.3 "body lengths/s" — exactly the stop threshold — so a standing car "moves",
+# chopping stopped_vehicle/congestion into pieces.
 SPEED_WINDOW_SEC = 0.6
 
 
@@ -74,16 +74,16 @@ def _anchor(r):
 
 
 def annotate(recs, zones, speed_window=SPEED_WINDOW_SEC):
-    """Траектория объекта: на каждый сэмпл
-      t      — время;
-      c      — центр бокса (для попарных расстояний между объектами);
-      g      — опорная точка на земле (ZONE_ANCHOR) — по ней зоны и линии;
-      speed, vx, vy — скорость в "длинах корпуса в секунду" (нормировка
-               на диагональ бокса = грубая компенсация перспективы),
-               по смещению центра за окно speed_window;
-      diag   — диагональ бокса в px (для попарной нормировки);
-      zones  — множество зон, в которых лежит g;
-      cls    — класс COCO.
+    """Object trajectory: for each sample
+      t      — time;
+      c      — box centre (for pairwise distances between objects);
+      g      — ground anchor point (ZONE_ANCHOR) — zones and lines are tested against it;
+      speed, vx, vy — speed in "body lengths per second" (normalisation
+               by the box diagonal = rough perspective compensation),
+               from the centre displacement over the speed_window;
+      diag   — box diagonal in px (for pairwise normalisation);
+      zones  — set of zones that contain g;
+      cls    — COCO class.
     """
     samples = []
     ts, cs = [], []
@@ -95,7 +95,7 @@ def annotate(recs, zones, speed_window=SPEED_WINDOW_SEC):
         t = r["t_sec"]
         ts.append(t)
         cs.append(c)
-        # самый поздний сэмпл, который старше t хотя бы на speed_window
+        # the latest sample that is older than t by at least speed_window
         while j + 1 < len(ts) - 1 and t - ts[j + 1] >= speed_window:
             j += 1
         speed = vx = vy = 0.0
@@ -114,10 +114,10 @@ def annotate(recs, zones, speed_window=SPEED_WINDOW_SEC):
 
 
 def sample_runs(samples, predicate, max_gap):
-    """Интервалы (start, end), где predicate(sample) истинно на
-    последовательных сэмплах; разрывает бег, если между сэмплами дыра >
-    max_gap (объект пропал из трекинга — не факт, что состояние
-    сохранилось всё это время)."""
+    """Intervals (start, end) where predicate(sample) holds on
+    consecutive samples; breaks the run if the gap between samples is >
+    max_gap (the object dropped out of tracking — no guarantee the state
+    persisted all that time)."""
     runs, start, prev_t = [], None, None
     for s in samples:
         ok = predicate(s)
@@ -150,12 +150,12 @@ def merge_intervals(intervals, gap=0.0):
 
 
 def concurrent_runs(intervals, thresh):
-    """Интервалы времени, где одновременно активно >= thresh интервалов
-    (sweep line по +1/-1 событиям начала/конца)."""
+    """Time intervals where >= thresh intervals are active at once
+    (sweep line over +1/-1 start/end events)."""
     if not intervals:
         return []
-    # при равном t сначала +1: передача "эстафеты" (одна машина уехала, другая
-    # встала в тот же сэмпл) и интервал нулевой длины не роняют счётчик
+    # at equal t, +1 goes first: a "relay handover" (one car leaves, another
+    # stops in the same sample) and zero-length intervals do not drop the counter
     events = sorted([(s, 1) for s, e in intervals] + [(e, -1) for s, e in intervals],
                     key=lambda x: (x[0], -x[1]))
     count, start, runs = 0, None, []
@@ -186,8 +186,8 @@ def first_entry_time(samples, zone_name):
 
 
 def _angle_between(vx1, vy1, vx2, vy2):
-    """Угол между двумя векторами в градусах [0, 180]. None, если один из
-    векторов нулевой (объект стоит — направление не определено)."""
+    """Angle between two vectors in degrees [0, 180]. None if either
+    vector is zero (the object is standing — direction undefined)."""
     n1 = (vx1 ** 2 + vy1 ** 2) ** 0.5
     n2 = (vx2 ** 2 + vy2 ** 2) ** 0.5
     if n1 < 1e-6 or n2 < 1e-6:
@@ -197,26 +197,26 @@ def _angle_between(vx1, vy1, vx2, vy2):
 
 
 def _line_side(point, line):
-    """Знак векторного произведения — по какую сторону от line (2 точки)
-    лежит point. line — [[x1,y1],[x2,y2]] (как размечает define_zones.py
-    для solid_line*: ЛИНИЯ, не полигон, поэтому pointPolygonTest не
-    применим — у линии нет "внутри", есть только две стороны)."""
+    """Sign of the cross product — which side of line (2 points) point
+    lies on. line is [[x1,y1],[x2,y2]] (as define_zones.py draws it
+    for solid_line*: a LINE, not a polygon, so pointPolygonTest does not
+    apply — a line has no "inside", only two sides)."""
     (x1, y1), (x2, y2) = line[0], line[1]
     px, py = point
     return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
 
 
 def _closest_approach(samples_a, samples_b, max_dt=0.6):
-    """Совмещает две траектории по времени (разные объекты сэмплируются
-    по одной и той же сетке кадров видео, но могут пропадать из трекинга
-    в разные моменты — поэтому ищем ближайший по времени сэмпл, а не
-    требуем точного совпадения индекса).
+    """Aligns two trajectories in time (different objects are sampled
+    on the same grid of video frames, but may drop out of tracking
+    at different moments — so we look for the nearest sample in time rather
+    than require an exact index match).
 
-    Возвращает список (t, dist_norm, closing) отсортированный по t:
-      dist_norm — расстояние между центроидами / средняя диагональ пары
-                  ("длины корпуса", та же нормировка, что у speed);
-      closing   — скорость сближения (dist_norm убывает -> closing > 0),
-                  None для самой первой точки пары (нет предыдущей)."""
+    Returns a list of (t, dist_norm, closing) sorted by t:
+      dist_norm — distance between centroids / mean diagonal of the pair
+                  ("body lengths", the same normalisation as speed);
+      closing   — closing speed (dist_norm decreasing -> closing > 0),
+                  None for the pair's very first point (no previous one)."""
     ts_b = [s["t"] for s in samples_b]
     aligned = []
     for sa in samples_a:
@@ -253,8 +253,8 @@ def _closest_approach(samples_a, samples_b, max_dt=0.6):
 
 class LightState:
     def __init__(self, samples):
-        """samples: список [t_sec, state], как возвращает
-        light_state.run_light_state() (или читается из его JSON)."""
+        """samples: list of [t_sec, state], as returned by
+        light_state.run_light_state() (or read from its JSON)."""
         samples = samples or []
         self.ts = [t for t, _ in samples]
         self.states = [s for _, s in samples]
@@ -279,23 +279,23 @@ class LightState:
 
 
 # ---------------------------------------------------------------- rules
-GREEN_STAND_SEC = 15.0     # очередь стоит на зелёном дольше — она не рассосалась за фазу
-JUNCTION_JAM_SEC = 40.0    # плотная масса на перекрёстке дольше фазы светофора (~37 с)
+GREEN_STAND_SEC = 15.0     # queue stands on green longer than this — it did not clear within the phase
+JUNCTION_JAM_SEC = 40.0    # dense mass on the junction longer than a light phase (~37 s)
 
 
 def _stationary_clusters(vehicle_objs, zones, min_count, merge_gap, min_duration,
                          speed_thresh, max_gap):
-    """Интервалы, когда в зонах zones одновременно стоят >= min_count машин."""
+    """Intervals when >= min_count cars stand in zones at the same time."""
     intervals = []
     for samples in vehicle_objs.values():
         intervals += sample_runs(
             samples, lambda x: x["speed"] < speed_thresh and bool(zones & x["zones"]), max_gap)
     active = merge_intervals(concurrent_runs(intervals, min_count), gap=merge_gap)
-    return [iv for iv in active if iv[1] - iv[0] >= min_duration]   # после склейки
+    return [iv for iv in active if iv[1] - iv[0] >= min_duration]   # after merging
 
 
 def _green_time(light, s, e):
-    """Сколько секунд из [s, e] горел зелёный (по сэмплам светофора)."""
+    """How many seconds of [s, e] the light was green (from the light samples)."""
     if light is None or not light.ts:
         return 0.0
     lo, hi = bisect.bisect_left(light.ts, s), bisect.bisect_right(light.ts, e)
@@ -306,21 +306,21 @@ def _green_time(light, s, e):
 def detect_congestion(vehicle_objs, signal_zones=("queue_zone",), junction_zones=(), light=None,
                       min_count=4, min_duration=5.0, merge_gap=3.0, speed_thresh=0.3, max_gap=2.0,
                       green_stand_sec=GREEN_STAND_SEC, junction_jam_sec=JUNCTION_JAM_SEC):
-    """Затор (определение задания: поток стоит или ползёт по всем полосам
-    направления; от "очередь встала" до "очередь рассосалась").
+    """Congestion (task definition: traffic stands or crawls in all lanes
+    of a direction; from "the queue stopped" to "the queue cleared").
 
-    Очередь на сигнал — не затор: она разъезжается на каждом зелёном. На
-    сэмплах кластеры из 4+ стоящих машин в queue_zone приходятся на красный
-    (зелёный — 10-37% их времени: это задержка разъезда), и прежнее правило
-    "4+ машины стоят" превращало в congestion каждую фазу красного.
-      * очередь перед светофором (signal_zones): затор, только если 4+
-        машины простояли >= green_stand_sec ПРИ ЗЕЛЁНОМ. Без светофора —
-        как на перекрёстке, по длительности;
-      * сам перекрёсток за светофором (junction_zones, crossroad*): затор,
-        если плотная масса стоит дольше фазы (>= junction_jam_sec) —
-        C3896, 40-108 с.
-    Кластеры считаются по группам зон отдельно: очередь и площадь — разные
-    места, и сумма "2 стоят там + 2 тут" — не затор."""
+    A queue at a signal is not congestion: it clears on every green. On the
+    samples, clusters of 4+ stopped cars in queue_zone fall on red
+    (green is 10-37% of their time: that is the discharge delay), and the old rule
+    "4+ cars standing" turned every red phase into congestion.
+      * queue before the light (signal_zones): congestion only if 4+
+        cars stood for >= green_stand_sec ON GREEN. Without a light —
+        as on the junction, by duration;
+      * the junction itself past the light (junction_zones, crossroad*): congestion
+        if a dense mass stands longer than a phase (>= junction_jam_sec) —
+        C3896, 40-108 s.
+    Clusters are counted per zone group separately: the queue and the square are
+    different places, and "2 standing there + 2 here" is not congestion."""
     signal_zones, junction_zones = set(signal_zones), set(junction_zones)
     args = (min_count, merge_gap, min_duration, speed_thresh, max_gap)
     jams = []
@@ -339,8 +339,8 @@ GREEN_RELEASE_SEC = 8.0
 
 
 def _released_by_green(light, t_stop, t_move, window=GREEN_RELEASE_SEC):
-    """Машина тронулась в течение window c после переключения на зелёный,
-    а стояла в основном на красном -> это ожидание сигнала."""
+    """The car moved off within window s after the switch to green,
+    having stood mostly on red -> this is waiting for the signal."""
     if light is None or not light.ts:
         return False
     t_green = light.next_after(t_stop, "green")
@@ -350,7 +350,7 @@ def _released_by_green(light, t_stop, t_move, window=GREEN_RELEASE_SEC):
 
 
 def _stationary_runs(vehicle_objs, speed_thresh, max_gap):
-    """oid -> [(start, end, центр px, диагональ px)] — стоянки объекта."""
+    """oid -> [(start, end, centre px, diagonal px)] — the object's stops."""
     out = {}
     for oid, samples in vehicle_objs.items():
         runs = []
@@ -363,7 +363,7 @@ def _stationary_runs(vehicle_objs, speed_thresh, max_gap):
 
 
 def _time_with_at_least(intervals, k):
-    """Суммарное время, когда одновременно открыто >= k интервалов."""
+    """Total time during which >= k intervals are open at once."""
     edges = sorted([(a, 1) for a, b in intervals if b > a] + [(b, -1) for a, b in intervals if b > a])
     total, depth, prev = 0.0, 0, None
     for t, d in edges:
@@ -379,42 +379,43 @@ def detect_stopped_vehicle(vehicle_objs, road_zones=None, junction_zones=(),
                             max_gap=2.0, cluster_min_others=2, cluster_radius=1.5,
                             cluster_overlap_frac=0.5, on_road_frac=0.5, light=None,
                             return_ids=False):
-    """Стоит >=10с (или >=queue_min_duration, если стоит в queue_zone — это
-    обычное ожидание цикла светофора, не событие, пока не затянулось) и это
-    НЕ часть пробки или очереди.
+    """Stands >= 10 s (or >= queue_min_duration if it stands in queue_zone — that is
+    ordinary waiting for the light cycle, not an event, unless it drags on) and is
+    NOT part of a jam or a queue.
 
-    Часть очереди, пробки или ряда припаркованных — если >= cluster_overlap_frac
-    времени стоянки ВПЛОТНУЮ к ней одновременно стоят >= cluster_min_others
-    машин (в заторе соседи приходят и уходят — считаем время, а не
-    соседей, простоявших всю стоянку целиком). Вплотную — не дальше
-    cluster_radius диагоналей МЕНЬШЕГО из двух боксов (у машины вблизи камеры
-    диагональ огромная, и по большей "соседями" становилась очередь на
-    магистрали в 650 px): очередь — это цепочка машин вплотную. Раньше машину отбрасывало
-    пересечение с ЛЮБЫМ сегментом congestion где угодно в кадре, и одиночная
-    машина, простоявшая 36 с посреди площади (C3897, 210-246 с), пропадала,
-    потому что в это время на магистрали стояла очередь на красный.
-    Проверка "в той же зоне" не лучше: зона площади — полкадра, и там почти
-    всегда кто-то ждёт выезда.
+    Part of a queue, jam or row of parked cars — if for >= cluster_overlap_frac
+    of the stop time >= cluster_min_others cars stand RIGHT NEXT to it at the same
+    time (in a jam neighbours come and go — we count time, not
+    neighbours that stood through the whole stop). Right next to — no further than
+    cluster_radius diagonals of the SMALLER of the two boxes (a car close to the camera
+    has a huge diagonal, and with the larger one the queue on the
+    main road 650 px away became "neighbours"): a queue is a chain of cars bumper to
+    bumper. Previously the car was discarded by an overlap with ANY congestion segment
+    anywhere in the frame, and a single car that stood 36 s in the middle of the square
+    (C3897, 210-246 s) was lost because a queue was waiting on red on the main road
+    at that time.
+    A "same zone" check is no better: the square zone is half the frame, and there is
+    almost always someone waiting to exit.
 
-    junction_zones — сам перекрёсток ЗА светофором (crossroad*). Для машины,
-    простоявшей там, не действует исключение "ждала зелёного": стоять
-    посреди перекрёстка нельзя, даже если трогаешься вместе с фазой (C3897:
-    0-27 с и 210-250 с — одиночные машины тронулись через 1-5 с после
-    зелёного). Исключение "стоит в кластере" остаётся: плотная масса машин
-    на площади — это congestion (C3896, 40-70 с), а не десяток stopped_vehicle.
+    junction_zones — the junction itself PAST the light (crossroad*). For a car
+    that stood there, the "waited for green" exemption does not apply: you may not stand
+    in the middle of a junction, even if you move off with the phase (C3897:
+    0-27 s and 210-250 s — single cars moved off 1-5 s after
+    green). The "stands in a cluster" exemption remains: a dense mass of cars
+    on the square is congestion (C3896, 40-70 s), not a dozen stopped_vehicle.
 
-    Раньше здесь не было отдельного порога для queue_zone: машина,
-    отстоявшая один нормальный цикл красного (15-40с) в очереди, но не
-    набравшая критическую массу для congestion (см. detect_congestion,
-    min_count), ложно засчитывалась как stopped_vehicle. Порог
-    queue_min_duration (60-90с по заданию) фильтрует это.
+    Previously there was no separate threshold for queue_zone: a car
+    that waited out one normal red cycle (15-40 s) in the queue without
+    reaching the critical mass for congestion (see detect_congestion,
+    min_count) was falsely counted as stopped_vehicle. The
+    queue_min_duration threshold (60-90 s per the task) filters this out.
 
-    road_zones: множество имён зон, которые физически являются проезжей
-    частью (roadway*, crossroad*, queue_zone, stop_line, crossing_*, см.
-    _scene_zone_sets). Если задано и меньше on_road_frac (по умолчанию
-    половины) сэмплов бега остановки попадает в эти зоны — событие НЕ
-    пишется: скорее всего это машина, стоящая на обочине/парковке/за
-    пределами размеченной дороги, а не "встала посреди проезжей части"."""
+    road_zones: set of zone names that are physically the
+    carriageway (roadway*, crossroad*, queue_zone, stop_line, crossing_*, see
+    _scene_zone_sets). If given and fewer than on_road_frac (by default
+    half) of the stop run's samples fall into these zones, the event is NOT
+    written: most likely this is a car standing on the shoulder/in a parking spot/outside
+    the annotated road, not one that "stopped in the middle of the carriageway"."""
     junction_zones = set(junction_zones)
     stationary = _stationary_runs(vehicle_objs, speed_thresh, max_gap)
     events, ids = [], []
@@ -427,8 +428,8 @@ def detect_stopped_vehicle(vehicle_objs, road_zones=None, junction_zones=(),
                                   / max(len(run_samples), 1))
                 if frac_on_road < on_road_frac:
                     continue
-            # Первая машина очереди стоит не в queue_zone, а на стоп-линии или
-            # прямо на переходе — это тоже ожидание сигнала, не stopped_vehicle.
+            # The first car in the queue stands not in queue_zone but on the stop line or
+            # right on the crossing — that is also waiting for the signal, not stopped_vehicle.
             frac_in_queue = (sum(1 for x in run_samples if x["zones"] & set(SIGNAL_WAIT_ZONES))
                               / max(len(run_samples), 1))
             required = queue_min_duration if frac_in_queue > 0.5 else min_duration
@@ -450,12 +451,12 @@ def detect_stopped_vehicle(vehicle_objs, road_zones=None, junction_zones=(),
 
 
 def _zones_by_prefix(zones, prefixes):
-    """Имена зон, совпадающие с одним из prefixes целиком или начинающиеся
-    с 'prefix_'. Так один физический смысл ("проезжая часть", "легитимный
-    переход") можно разбить на несколько полигонов под неудобную форму
-    сцены (roadway, roadway_before_queue, crossroad, crossroad_2 — все
-    "проезжая часть"; crossing_far, crossing_near — все "переход"),
-    вместо одного самопересекающегося полигона, который cv2 не умеет."""
+    """Zone names that equal one of prefixes exactly or start
+    with 'prefix_'. This lets one physical meaning ("carriageway", "legitimate
+    crossing") be split into several polygons to fit an awkward scene
+    shape (roadway, roadway_before_queue, crossroad, crossroad_2 — all
+    "carriageway"; crossing_far, crossing_near — all "crossing"),
+    instead of one self-intersecting polygon, which cv2 cannot handle."""
     names = set()
     for name in zones:
         for p in prefixes:
@@ -465,13 +466,13 @@ def _zones_by_prefix(zones, prefixes):
     return names
 
 
-RIDER_IOA = 0.6   # доля бокса человека внутри бокса транспорта: едет на нём/в нём
+RIDER_IOA = 0.6   # fraction of the person's box inside the vehicle's box: riding on/in it
 
 
 def _mark_riders(groups, person_objs):
-    """sample["in_vehicle"] у людей, чей бокс в этом кадре почти целиком внутри
-    бокса транспорта: мотоциклист, велосипедист, пассажир у окна автобуса
-    (C3902, 145 с: мотоциклист был jaywalking)."""
+    """sample["in_vehicle"] for people whose box in this frame lies almost entirely
+    inside a vehicle's box: motorcyclist, cyclist, bus passenger at the window
+    (C3902, 145 s: a motorcyclist was flagged as jaywalking)."""
     boxes = lambda rs: np.array([[r["x1"], r["y1"], r["x2"], r["y2"]] for r in rs], np.float32)
     vehicles, persons = {}, {}
     for oid, recs in groups.items():
@@ -497,14 +498,14 @@ def _mark_riders(groups, person_objs):
 
 def detect_jaywalking(person_objs, roadway_zones, crossing_zones=(), min_duration=1.0,
                        max_gap=1.0, return_ids=False):
-    """Пешеход на проезжей части ВНЕ легитимного перехода.
+    """Pedestrian on the carriageway OUTSIDE a legitimate crossing.
 
-    roadway_zones/crossing_zones — множества имён зон (см. _zones_by_prefix).
-    crossing_zones обязательно исключаются: на реальной разметке зоны
-    "проезжая часть" и "переход" почти всегда немного перекрываются на
-    границе (тут так и есть — crossroad_2 залезает на crossing_near), и
-    без явного исключения человек, идущий ПО зебре в зоне нахлёста, тоже
-    засчитывался бы как jaywalking."""
+    roadway_zones/crossing_zones — sets of zone names (see _zones_by_prefix).
+    crossing_zones are always excluded: in real annotations the
+    "carriageway" and "crossing" zones almost always overlap slightly at the
+    border (as here — crossroad_2 extends onto crossing_near), and
+    without an explicit exclusion a person walking ALONG the zebra in the overlap
+    would also be counted as jaywalking."""
     crossing_zones = set(crossing_zones)
     events, ids = [], []
     for oid, samples in person_objs.items():
@@ -521,14 +522,14 @@ def detect_jaywalking(person_objs, roadway_zones, crossing_zones=(), min_duratio
     return (events, ids) if return_ids else events
 
 
-STOP_LINE_MIN_STOP_SEC = 1.5   # короче — не остановка, а притормаживание
+STOP_LINE_MIN_STOP_SEC = 1.5   # shorter is not a stop, just slowing down
 
 
 def _waited_then_entered_on_green(samples, t_from, wait_zone, junction_zones, speed_thresh=0.3,
                                   min_stop=STOP_LINE_MIN_STOP_SEC, light=None):
-    """True, если после t_from машина постояла >= min_stop в wait_zone (за
-    стоп-линией) и въехала на перекрёсток уже не на красный: это stop_line, а
-    не проезд на красный."""
+    """True if after t_from the car stood >= min_stop in wait_zone (past the
+    stop line) and entered the junction no longer on red: this is stop_line, not
+    running a red light."""
     stopped_since, waited = None, False
     for s in samples:
         if s["t"] < t_from:
@@ -545,17 +546,17 @@ def _waited_then_entered_on_green(samples, t_from, wait_zone, junction_zones, sp
 
 def detect_red_light(vehicle_objs, light, gate_zone="stop_line", exit_zone="crossing_far",
                       wait_zone=None, junction_zones=frozenset(), return_ids=False):
-    """Машина реально проезжает на красный: заходит в gate_zone (широкая
-    зона очереди перед переходом, это ок и на "правильную" остановку) на
-    красный свет И ДОЕЗЖАЕТ до exit_zone, пока свет ВСЁ ЕЩЁ красный.
+    """The car actually runs a red light: enters gate_zone (a wide
+    queue zone before the crossing; entering it is fine even for a "proper" stop) on
+    red AND REACHES exit_zone while the light is STILL red.
 
-    Раньше свет проверялся только один раз — в момент входа в gate_zone —
-    и событие писалось, даже если машина: (а) вообще не доехала до
-    exit_zone за время трека (просто стояла в очереди), или (б) доехала
-    до exit_zone уже на зелёном, честно отстояв цикл светофора. Оба
-    случая давали массовые false positive почти на каждой машине в
-    очереди, т.к. gate_zone у нас широкая (весь фронт очереди), а не
-    тонкая линия."""
+    Previously the light was checked only once — at the moment of entering gate_zone —
+    and the event was written even if the car: (a) never reached
+    exit_zone during the track (just stood in the queue), or (b) reached
+    exit_zone already on green, having honestly waited out the light cycle. Both
+    cases produced mass false positives on almost every car in the
+    queue, because our gate_zone is wide (the whole queue front), not a
+    thin line."""
     events, ids = [], []
     for oid, samples in vehicle_objs.items():
         t_cross = first_entry_time(samples, gate_zone)
@@ -567,17 +568,17 @@ def detect_red_light(vehicle_objs, light, gate_zone="stop_line", exit_zone="cros
                 continue
             if exit_zone in s["zones"]:
                 if not was_in_exit:
-                    # момент фактического въезда в exit_zone — свет должен
-                    # быть красным именно сейчас, а не только при t_cross
+                    # the moment of actually entering exit_zone — the light must
+                    # be red right now, not only at t_cross
                     violated = light.at(s["t"]) == "red"
                 was_in_exit = True
             elif was_in_exit:
                 t_end = s["t"]
                 break
         if not was_in_exit or not violated:
-            continue  # не доехал(а) до exit_zone, или доехал(а) уже на зелёном
+            continue  # did not reach exit_zone, or reached it already on green
         if wait_zone and _waited_then_entered_on_green(samples, t_cross, wait_zone, junction_zones, light=light):
-            continue  # встал(а) за линией и поехал(а) на зелёный — это stop_line
+            continue  # stopped past the line and went on green — that is stop_line
         if t_end is None:
             t_end = samples[-1]["t"]
         if t_end > t_cross:
@@ -588,14 +589,14 @@ def detect_red_light(vehicle_objs, light, gate_zone="stop_line", exit_zone="cros
 
 def detect_stop_line(vehicle_objs, light, zone="past_stop_line", speed_thresh=0.3, max_gap=2.0,
                      min_stop=STOP_LINE_MIN_STOP_SEC, return_ids=False):
-    """stop_line по определению задачи: машина ОСТАНОВИЛАСЬ за стоп-линией на
-    красный, не въехав на перекрёсток; конец события — включение зелёного.
+    """stop_line per the task definition: the car STOPPED past the stop line on
+    red without entering the junction; the event ends when the light turns green.
 
-    zone — область за стоп-линией: от линии до дальнего края зебры, только в
-    ширину полос нашей очереди (past_stop_line). Раньше считалась только полоса
-    до зебры, и машина, вставшая передом на зебре (C3905, 1:18, 37 с на
-    красный), не попадала никуда. Одно событие на машину за фазу красного;
-    кто потом проехал на красный — тот red_light (фильтр в compute_events_debug)."""
+    zone — the area past the stop line: from the line to the far edge of the zebra,
+    only across the width of our queue's lanes (past_stop_line). Previously only the
+    strip up to the zebra counted, and a car that stopped with its front on the zebra
+    (C3905, 1:18, 37 s on red) fell into no zone. One event per car per red phase;
+    whoever then runs the red is red_light (filter in compute_events_debug)."""
     events, ids = [], []
     for oid, samples in vehicle_objs.items():
         runs = sample_runs(samples, lambda s: s["speed"] < speed_thresh and zone in s["zones"], max_gap)
@@ -604,7 +605,7 @@ def detect_stop_line(vehicle_objs, light, zone="past_stop_line", speed_thresh=0.
             if e - s < min_stop or light.at(s) != "red":
                 continue
             if last_end is not None and s < last_end:
-                continue  # та же фаза красного: машина чуть проползла и снова встала
+                continue  # same red phase: the car crept forward a bit and stopped again
             t_green = light.next_after(s, "green")
             t_end = t_green if t_green is not None else e
             events.append([round(s, 2), round(t_end, 2), "stop_line"])
@@ -613,8 +614,8 @@ def detect_stop_line(vehicle_objs, light, zone="past_stop_line", speed_thresh=0.
     return (events, ids) if return_ids else events
 
 
-# Зоны с ОДНИМ направлением движения, где wrong_way вообще имеет смысл.
-# Площадь/перекрёсток сюда не входят: там законно едут в разные стороны.
+# Zones with a SINGLE direction of travel, where wrong_way makes sense at all.
+# The square/junction is not included: traffic legitimately goes in different directions there.
 WRONG_WAY_ZONES = ("roadway", "roadway_before_queue")
 WRONG_WAY_MIN_SAMPLES = 200
 WRONG_WAY_MIN_CONCENTRATION = 0.6
@@ -622,26 +623,26 @@ WRONG_WAY_MIN_CONCENTRATION = 0.6
 
 def detect_wrong_way(vehicle_objs, roadway_zones, min_speed=0.15, angle_thresh=140.0,
                       min_duration=1.0, max_gap=1.5, return_ids=False):
-    """Машина едет против преобладающего потока на проезжей части.
+    """A car drives against the prevailing flow on the carriageway.
 
-    ПЕРВАЯ версия, не откалибрована. Вместо жёстко зашитого вектора
-    направления (который пришлось бы подбирать вручную под ракурс этой
-    конкретной камеры) эталонное направление потока считается САМ ИЗ
-    ВИДЕО: циркулярное среднее векторов скорости всех машин на
-    проезжей части в этом же ролике. Это устойчивее к неточной ручной
-    прикидке направления по camera_own.md и подходит для скрытого теста
-    той же камеры без переразметки. Компромисс: если в ролике реально
-    почти все едут "неправильно" (сам поток развернули, например
-    ремонт/перекрытие), эталон сместится и wrong_way не сработает —
-    в сэмплах организаторов такого не замечено (camera_own.md).
+    FIRST version, not calibrated. Instead of a hard-coded direction
+    vector (which would have to be tuned by hand to the view of this
+    particular camera), the reference flow direction is computed FROM THE
+    VIDEO ITSELF: the circular mean of the velocity vectors of all cars on
+    the carriageway in the same clip. This is more robust than a rough manual
+    estimate of the direction from camera_own.md and works for a hidden test
+    on the same camera without re-annotation. Trade-off: if in a clip really
+    almost everyone drives "the wrong way" (the flow itself was reversed, e.g.
+    roadworks/closure), the reference shifts and wrong_way does not fire —
+    nothing like this was seen in the organisers' samples (camera_own.md).
 
-    angle_thresh=140° — велик специально: обычные манёвры (перестроение,
-    поворот на площади) меняют курс на 30-90°, встречное движение — это
-    ~180°. Порог ближе к 180, чем к 90, чтобы не путать поворот с wrong_way."""
-    # Эталон считается ОТДЕЛЬНО для каждой зоны и только там, где поток
-    # однонаправленный. На площади (crossroad*) сходятся несколько дорог:
-    # единый усреднённый "эталон" объявлял встречным обычный поток с
-    # правой дороги (видно на debug-видео C3896/C3902).
+    angle_thresh=140° is large on purpose: ordinary manoeuvres (lane change,
+    turning on the square) change heading by 30-90°, oncoming traffic is
+    ~180°. The threshold is closer to 180 than to 90 so a turn is not taken for wrong_way."""
+    # The reference is computed SEPARATELY for each zone and only where the flow
+    # is one-directional. Several roads meet on the square (crossroad*):
+    # a single averaged "reference" flagged the ordinary flow from the
+    # right-hand road as oncoming (visible in the debug videos C3896/C3902).
     zones_used = [z for z in WRONG_WAY_ZONES if z in roadway_zones]
     if not zones_used:
         return ([], []) if return_ids else []
@@ -658,12 +659,12 @@ def detect_wrong_way(vehicle_objs, roadway_zones, min_speed=0.15, angle_thresh=1
                     n += 1
         if n < WRONG_WAY_MIN_SAMPLES:
             continue
-        concentration = (sx ** 2 + sy ** 2) ** 0.5 / n   # 1 = все в одну сторону
+        concentration = (sx ** 2 + sy ** 2) ** 0.5 / n   # 1 = all in one direction
         if concentration >= WRONG_WAY_MIN_CONCENTRATION:
             refs[zname] = (sx, sy)
         else:
-            print(f"wrong_way: зона {zname} пропущена — поток не однонаправленный "
-                  f"(концентрация {concentration:.2f})")
+            print(f"wrong_way: zone {zname} skipped — flow is not one-directional "
+                  f"(concentration {concentration:.2f})")
     if not refs:
         return ([], []) if return_ids else []
 
@@ -686,8 +687,8 @@ def detect_wrong_way(vehicle_objs, roadway_zones, min_speed=0.15, angle_thresh=1
 
 
 def _heading_series(samples, min_speed):
-    """[(t, heading_deg)] только для сэмплов, где объект реально движется
-    (иначе heading — шум формата atan2(0,0))."""
+    """[(t, heading_deg)] only for samples where the object is actually moving
+    (otherwise heading is atan2(0,0) noise)."""
     out = []
     for s in samples:
         if s["speed"] >= min_speed:
@@ -697,28 +698,27 @@ def _heading_series(samples, min_speed):
 
 def detect_illegal_u_turn(vehicle_objs, roadway_zones, min_speed=0.12, window_sec=4.0,
                            turn_angle_thresh=120.0, max_gap=2.0, return_ids=False):
-    """Разворот на 180° на проезжей части. ПЕРВАЯ версия: разметки "здесь
-    разворот разрешён" нет нигде в zones.json/camera_own.md, поэтому —
-    — ЛЮБОЙ обнаруженный
-    разворот на проезжей части (roadway*/crossroad*) считается illegal.
-    Если на скрытом тесте окажется место с разрешённым разворотом, это
-    даст FP — придётся завести отдельную зону-исключение по образцу
+    """180° U-turn on the carriageway. FIRST version: there is no "U-turn allowed
+    here" annotation anywhere in zones.json/camera_own.md, so ANY detected
+    U-turn on the carriageway (roadway*/crossroad*) counts as illegal.
+    If the hidden test has a place where U-turns are allowed, this will
+    give FPs — a separate exclusion zone will be needed, modelled on
     illegal_turn_exit.
 
-    Детектируем не сам "разворот" геометрически (нет разметки полос по
-    сторонам), а ФАКТ разворота курса: heading в момент t2 отличается от
-    heading в t1 на >= turn_angle_thresh, окно t2-t1 <= window_sec (разворот
-    — манёвр за несколько секунд, не мгновенный), и весь промежуток
-    объект остаётся на проезжей части (иначе это могло бы быть, например,
-    заездом за пределы кадра и появлением с другим курсом — другой физический
-    смысл)."""
+    We detect not the "U-turn" geometrically (there is no lane annotation for
+    the two sides) but the FACT of heading reversal: heading at t2 differs from
+    heading at t1 by >= turn_angle_thresh, the window t2-t1 <= window_sec (a U-turn
+    is a manoeuvre over several seconds, not instantaneous), and throughout the
+    interval the object stays on the carriageway (otherwise it could be, for example,
+    leaving the frame and reappearing with a different heading — a different
+    physical meaning)."""
     if not roadway_zones:
         return ([], []) if return_ids else []
 
     events, ids = [], []
     for oid, samples in vehicle_objs.items():
         heading = _heading_series(samples, min_speed)
-        # индекс сэмпла (по времени) -> находится ли объект на проезжей части
+        # sample index (by time) -> whether the object is on the carriageway
         on_road_at = {s["t"]: bool(roadway_zones & s["zones"]) for s in samples}
         ts_all = sorted(on_road_at)
 
@@ -731,11 +731,11 @@ def detect_illegal_u_turn(vehicle_objs, roadway_zones, min_speed=0.12, window_se
                 if dt > window_sec:
                     break
                 if dt < window_sec * 0.35:
-                    continue  # слишком быстро для реального разворота — скорее шум курса
+                    continue  # too fast for a real U-turn — more likely heading noise
                 diff = abs(h1 - h2)
                 diff = min(diff, 360.0 - diff)
                 if diff >= turn_angle_thresh:
-                    # весь диапазон [t1, t2] должен быть на проезжей части
+                    # the whole range [t1, t2] must be on the carriageway
                     span = [t for t in ts_all if t1 - 1e-6 <= t <= t2 + 1e-6]
                     if span and all(on_road_at[t] for t in span):
                         candidates.append((t1, t2))
@@ -747,20 +747,20 @@ def detect_illegal_u_turn(vehicle_objs, roadway_zones, min_speed=0.12, window_se
 
 
 TWO_WHEELERS = {1, 3}         # bicycle, motorcycle
-# Заезд на тротуарный островок. Официального класса для него нет (добавлять
-# свои id нельзя — харнесс их выбросит), поэтому это ДИАГНОСТИЧЕСКОЕ событие:
-# видно в визуализации, в predictions.json не попадает (solution.DIAGNOSTIC_CLASSES).
+# Mounting a sidewalk island. There is no official class for it (adding our own
+# ids is not allowed — the harness drops them), so this is a DIAGNOSTIC event:
+# visible in the visualisation, not written to predictions.json (solution.DIAGNOSTIC_CLASSES).
 CURB_MOUNT = "curb_mount"
-ISLAND_FOOTPRINT_FRAC = 0.3   # доля высоты бокса над его низом: середина колёсной базы
-TURN_RATE_DEG_S = 12.0        # курс меняется быстрее — машина в повороте
+ISLAND_FOOTPRINT_FRAC = 0.3   # fraction of box height above its bottom: middle of the wheelbase
+TURN_RATE_DEG_S = 12.0        # heading changes faster — the car is turning
 TURN_PAD_MIN, TURN_PAD_MAX = 1.0, 4.0
 
 
 def _turn_span(samples, t0, t1, min_speed=0.3):
-    """Границы поворота вокруг [t0, t1]: пока курс меняется быстрее
-    TURN_RATE_DEG_S, но не меньше TURN_PAD_MIN и не больше TURN_PAD_MAX с
-    каждой стороны. В разметке поворот — от начала до конца манёвра, а
-    наезд на островок — только его середина (0.4 с): без расширения IoU < 0.3."""
+    """Turn bounds around [t0, t1]: as long as heading changes faster than
+    TURN_RATE_DEG_S, but no less than TURN_PAD_MIN and no more than TURN_PAD_MAX s
+    on each side. In the annotations a turn spans the whole manoeuvre, while
+    mounting the island is only its middle (0.4 s): without widening, IoU < 0.3."""
     hs = _heading_series(samples, min_speed)
     if len(hs) < 3:
         return t0 - TURN_PAD_MIN, t1 + TURN_PAD_MIN
@@ -779,17 +779,17 @@ def _turn_span(samples, t0, t1, min_speed=0.3):
     return float(max(start, samples[0]["t"])), float(min(end, samples[-1]["t"]))
 
 
-ROUTE_TURN_DEV_DEG = 20.0   # курс отклонился от курса подъезда -> поворот начался
-ROUTE_TURN_MIN_SPEED = 0.07  # медленнее — курс шумит (стоянка перед поворотом)
-ROUTE_TURN_MAX_SEC = 6.0     # раньше — это перестроения в пробке на площади, не поворот
+ROUTE_TURN_DEV_DEG = 20.0   # heading deviated from the approach heading -> the turn has started
+ROUTE_TURN_MIN_SPEED = 0.07  # slower than this, heading is noisy (standing before the turn)
+ROUTE_TURN_MAX_SEC = 6.0     # earlier than this is lane shuffling in the jam on the square, not the turn
 
 
 def _route_turn_span(samples, t_origin, t_junction, t_exit):
-    """Поворот машины, приехавшей с магистрали: начало — первый сэмпл после
-    въезда на площадь, где курс отклонился от курса подъезда больше чем на
-    ROUTE_TURN_DEV_DEG; конец — въезд на выезд, продлённый, пока курс ещё
-    меняется. Поворот часто начинается почти с места (C3896, 45: стояла
-    40-48 с, повернула 49.6-55.9 с) — поэтому порог скорости низкий."""
+    """Turn of a car that came from the main road: start — the first sample after
+    entering the square where heading deviated from the approach heading by more than
+    ROUTE_TURN_DEV_DEG; end — entry into the exit, extended while heading is still
+    changing. The turn often starts almost from standstill (C3896, 45: stood
+    40-48 s, turned 49.6-55.9 s) — hence the low speed threshold."""
     hs = _heading_series(samples, ROUTE_TURN_MIN_SPEED)
     approach = [h for t, h in hs if t_origin <= t <= t_junction]
     if not approach:
@@ -804,11 +804,11 @@ def _route_turn_span(samples, t_origin, t_junction, t_exit):
 
 
 def detect_curb_mount(vehicle_objs, zones, min_speed=0.3, min_duration=0.3, max_gap=1.0):
-    """Машина заезжает на тротуарный островок (sidewalk*) на ходу.
-    Низ бокса машины, едущей по диагонали, — это ближний к камере угол
-    бампера, он остаётся на асфальте (C3905, 100 с: 0 из 7 кадров на
-    островке); проверяем точку на ISLAND_FOOTPRINT_FRAC высоты бокса выше
-    низа — там колёса. Возвращает ([события], [oid])."""
+    """A car mounts a sidewalk island (sidewalk*) while moving.
+    The bottom of the box of a car driving diagonally is the bumper corner nearest
+    to the camera, and it stays on the asphalt (C3905, 100 s: 0 of 7 frames on
+    the island); we test the point ISLAND_FOOTPRINT_FRAC of the box height above
+    the bottom — that is where the wheels are. Returns ([events], [oid])."""
     islands = [np.asarray(zones[n], np.float32) for n in _zones_by_prefix(zones, ("sidewalk",))]
     events, ids = [], []
     if not islands:
@@ -816,12 +816,12 @@ def detect_curb_mount(vehicle_objs, zones, min_speed=0.3, min_duration=0.3, max_
 
     def on_island(x):
         (cx, cy), (_, gy) = x["c"], x["g"]
-        foot = (cx, gy - ISLAND_FOOTPRINT_FRAC * 2.0 * (gy - cy))   # h = 2 * (низ - центр)
+        foot = (cx, gy - ISLAND_FOOTPRINT_FRAC * 2.0 * (gy - cy))   # h = 2 * (bottom - centre)
         return any(in_zone(foot, poly) for poly in islands)
 
     for oid, samples in vehicle_objs.items():
         if samples[0]["cls"] in TWO_WHEELERS:
-            continue  # мопед/велосипед заезжает на край островка законно (C3896, 24 с)
+            continue  # a moped/bicycle legitimately rides onto the island edge (C3896, 24 s)
         runs = sample_runs(samples, lambda x: x["speed"] >= min_speed and on_island(x), max_gap)
         for s, e in runs:
             if e - s >= min_duration:
@@ -836,23 +836,23 @@ APEX_TO_EXIT_MAX_SEC = 3.0
 
 
 def detect_illegal_turn(vehicle_objs, zones, origin_zones=ILLEGAL_TURN_ORIGIN, return_ids=False):
-    """Поворот в запрещённом направлении — по МАРШРУТУ, а не по месту поворота.
+    """A turn in a prohibited direction — by ROUTE, not by where the turn happens.
 
-    На этом перекрёстке запрещённый манёвр — приехать с магистрали (очередь
-    -> дальний переход), уйти вглубь площади, развернуться там (зона
-    illegal_turn_apex*) и уехать назад-влево через нижний конец ближнего
-    перехода (зона illegal_turn_exit*). Разрешённый поворот на ту же улицу —
-    сразу направо, на верхний конец перехода. Проверено глазами на сэмплах:
-    C3896 45 (49.6 с) и 830 (284 с) — нарушение. Без вершины разворота
-    правило ловило машины, которые просто едут влево вдоль нижнего края
-    кадра от правого края (C3896 628, C3897 602, C3902 x3: трекер склеил их
-    с машиной с магистрали), и машины, заехавшие на площадь справа
-    (C3905 457). Прежнее правило "поворот на 50-150 градусов внутри
-    полигона" ловило объезды и пропускало эти развороты.
+    At this junction the prohibited manoeuvre is: arrive from the main road (queue
+    -> far crossing), go deep into the square, turn around there (zone
+    illegal_turn_apex*) and leave back-left through the lower end of the near
+    crossing (zone illegal_turn_exit*). The allowed turn into the same street is
+    immediately right, onto the upper end of the crossing. Verified by eye on the
+    samples: C3896 45 (49.6 s) and 830 (284 s) are violations. Without the U-turn apex
+    the rule caught cars that simply drive left along the bottom edge of the
+    frame from the right edge (C3896 628, C3897 602, C3902 x3: the tracker merged them
+    with a car from the main road), and cars that entered the square from the right
+    (C3905 457). The old rule "a 50-150 degree turn inside a
+    polygon" caught detours and missed these U-turns.
 
-    Отрезок — сам поворот (_route_turn_span): от момента, когда курс
-    отклонился от курса подъезда, до въезда в illegal_turn_exit (+ дотягиваем,
-    пока курс ещё меняется). Заезд на островок — отдельно, detect_curb_mount."""
+    The segment is the turn itself (_route_turn_span): from the moment heading
+    deviated from the approach heading until entering illegal_turn_exit (+ extended
+    while heading is still changing). Mounting the island is separate: detect_curb_mount."""
     events, ids = [], []
     exit_zones = _zones_by_prefix(zones, ("illegal_turn_exit",))
     apex_zones = _zones_by_prefix(zones, ("illegal_turn_apex",))
@@ -869,8 +869,8 @@ def detect_illegal_turn(vehicle_objs, zones, origin_zones=ILLEGAL_TURN_ORIGIN, r
         if t_apex is None:
             continue
         t_exit = next((x["t"] for x in after if x["t"] > t_apex and x["zones"] & exit_zones), None)
-        # разворот — это непрерывный манёвр: из вершины сразу в выезд (на сэмплах
-        # 0.3-1 с). 6-8 с — склеенный трекером трек двух разных машин (C3902)
+        # a U-turn is a continuous manoeuvre: from the apex straight into the exit (on the
+        # samples 0.3-1 s). 6-8 s means the tracker merged the tracks of two different cars (C3902)
         if t_exit is not None and not any(
                 x["zones"] & apex_zones for x in after if t_exit - APEX_TO_EXIT_MAX_SEC <= x["t"] < t_exit):
             continue
@@ -885,21 +885,21 @@ def detect_illegal_turn(vehicle_objs, zones, origin_zones=ILLEGAL_TURN_ORIGIN, r
 
 def detect_solid_line_crossing(vehicle_objs, zones, settle_sec=1.5, max_gap=2.0,
                                 margin_norm=0.25, return_ids=False):
-    """Пересечение сплошной линии — требует зон-ЛИНИЙ 'solid_line'/
-    'solid_line_*' (ровно 2 точки каждая, см. define_zones.py, клавиша 7).
-    Без такой линии в zones.json — ничего не находит, не падает.
+    """Crossing a solid line — requires LINE zones 'solid_line'/
+    'solid_line_*' (exactly 2 points each, see define_zones.py, key 7).
+    Without such a line in zones.json it finds nothing and does not crash.
 
-    В отличие от полигональных зон, у линии нет "внутри" — cv2.pointPolygonTest
-    не применим, поэтому сторона определяется знаком векторного произведения
-    (_line_side). Пересечение — смена знака между последовательными сэмплами
-    одного объекта, но с гистерезисом: сторона засчитывается, только если
-    опорная точка отошла от линии дальше margin_norm диагоналей бокса —
-    иначе машина, едущая ВДОЛЬ линии, от дрожания бокса "пересекает" её
-    десятки раз. end = start + settle_sec (фиксированный запас на то,
-    что объект "полностью в новой полосе" — секунда-полторы после пересечения
-    в этой сцене соответствует масштабу машины на проезжей части; тонко
-    настраивать без разметки machinery невозможно, это грубая, но безопасная
-    оценка длительности события)."""
+    Unlike polygon zones, a line has no "inside" — cv2.pointPolygonTest
+    does not apply, so the side is given by the sign of the cross product
+    (_line_side). A crossing is a sign change between consecutive samples
+    of one object, but with hysteresis: a side counts only if the
+    anchor point is further from the line than margin_norm box diagonals —
+    otherwise a car driving ALONG the line "crosses" it dozens of times from
+    box jitter. end = start + settle_sec (a fixed margin for the object
+    to be "fully in the new lane" — a second to a second and a half after crossing
+    in this scene matches the scale of a car on the carriageway; fine-tuning
+    without annotated machinery is impossible, this is a rough but safe
+    estimate of the event duration)."""
     lines = {name: pts for name, pts in zones.items()
              if name == "solid_line" or name.startswith("solid_line_")}
     if not lines:
@@ -913,16 +913,16 @@ def detect_solid_line_crossing(vehicle_objs, zones, settle_sec=1.5, max_gap=2.0,
             prev_side, prev_t = None, None
             for s_ in samples:
                 if prev_t is not None and s_["t"] - prev_t > max_gap:
-                    prev_side = None  # трек прерывался — не доверяем "пересечению" через дыру
+                    prev_side = None  # the track was interrupted — do not trust a "crossing" across the gap
                 prev_t = s_["t"]
-                # проекция на отрезок: за концами линии пересечения нет
+                # projection onto the segment: there is no crossing beyond the line's ends
                 px, py = s_["g"]
                 u = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / seg_len ** 2
                 if not 0.0 <= u <= 1.0:
                     continue
-                dist = _line_side(s_["g"], line) / seg_len  # знаковое расстояние, px
+                dist = _line_side(s_["g"], line) / seg_len  # signed distance, px
                 if abs(dist) < margin_norm * s_["diag"]:
-                    continue  # в "мёртвой зоне" у линии — сторону не обновляем
+                    continue  # in the "dead zone" near the line — do not update the side
                 side = dist > 0
                 if prev_side is not None and side != prev_side:
                     t_cross = s_["t"]
@@ -935,10 +935,10 @@ def detect_solid_line_crossing(vehicle_objs, zones, settle_sec=1.5, max_gap=2.0,
 
 def detect_failure_to_yield(vehicle_objs, person_objs, crossing_zones, max_gap=2.0,
                              ped_merge_gap=0.5, min_duration=0.2, return_ids=False):
-    """Машина проезжает через переход, пока на нём (или заходит на него)
-    пешеход. Считается ПО КАЖДОМУ переходу отдельно (crossing_far и
-    crossing_near — разные физические переходы; не смешиваем пешехода на
-    одном с машиной на другом)."""
+    """A car drives through a crossing while a pedestrian is on it (or stepping
+    onto it). Computed PER crossing separately (crossing_far and
+    crossing_near are different physical crossings; we do not mix a pedestrian on
+    one with a car on the other)."""
     if not crossing_zones:
         return ([], []) if return_ids else []
 
@@ -962,35 +962,35 @@ def detect_failure_to_yield(vehicle_objs, person_objs, crossing_zones, max_gap=2
     return (events, ids) if return_ids else events
 
 
-# Пороги для accident/near_miss — те же единицы ("длины корпуса" и
-# секунды), что уже калибровались (неформально, на глаз) для TTC-эвристики
-# RiskEstimator в solution.py; здесь НЕ каузально (весь ролик разом), что
-# позволяет смотреть и назад, и вперёд относительно момента сближения —
-# в частности, отличать accident (после сближения объекты ОСТАНАВЛИВАЮТСЯ
-# и стоят) от обычного плотного, но безопасного трафика (bbox тоже может
-# перекрываться из-за перспективы камеры, особенно в очереди — separate
-# STOP-признак нужен именно чтобы отсечь этот источник FP).
-ACCIDENT_DIST_NORM = 0.35     # "длины корпуса" — боксы фактически перекрываются
-DANGER_DIST_NORM = 1.6        # ближе этого — уже опасное сближение
-TTC_DANGER_NONCAUSAL = 1.5    # сек
+# Thresholds for accident/near_miss — the same units ("body lengths" and
+# seconds) that were already calibrated (informally, by eye) for the TTC heuristic of
+# RiskEstimator in solution.py; here it is NOT causal (the whole clip at once), which
+# lets us look both backward and forward from the moment of closest approach —
+# in particular, to tell an accident (after the approach the objects STOP
+# and stay stopped) from ordinary dense but safe traffic (bboxes can also
+# overlap because of camera perspective, especially in a queue — the separate
+# STOP feature is needed precisely to cut this source of FP).
+ACCIDENT_DIST_NORM = 0.35     # "body lengths" — the boxes actually overlap
+DANGER_DIST_NORM = 1.6        # closer than this is already a dangerous approach
+TTC_DANGER_NONCAUSAL = 1.5    # s
 STILL_SPEED = 0.12
 MOVING_SPEED = 0.25
-STILL_HOLD_SEC = 1.5          # сколько нужно простоять, чтобы считать "остановкой из-за ДТП"
-BRAKE_DROP_RATIO = 0.55       # относительное падение скорости для "резкого торможения"
-PRE_CONTACT_SEC = 1.5         # окно ДО контакта, в котором кто-то из пары должен реально ехать
-# near_miss (б) — одиночное резкое торможение без второго участника.
-# ВЫКЛЮЧЕНО: каждая машина, тормозящая перед очередью на красный, даёт
-# такое событие — на этой камере это сотни FP на ролик.
+STILL_HOLD_SEC = 1.5          # how long it must stand to count as a "stop caused by a crash"
+BRAKE_DROP_RATIO = 0.55       # relative speed drop for "hard braking"
+PRE_CONTACT_SEC = 1.5         # window BEFORE contact in which one of the pair must actually be moving
+# near_miss (b) — a single hard braking with no second participant.
+# DISABLED: every car braking before a queue on red produces
+# such an event — on this camera that is hundreds of FP per clip.
 NEAR_MISS_FROM_BRAKING = False
-PAIR_PREFILTER_NORM = 2.0     # пары, ни разу не сблизившиеся ближе — не рассматриваем
+PAIR_PREFILTER_NORM = 2.0     # pairs that never came closer than this are not considered
 
 
 def _candidate_pairs(all_objs, thresh=PAIR_PREFILTER_NORM):
-    """Пары объектов, которые хотя бы в одном кадре были ближе thresh
-    "длин корпуса". Все объекты сэмплируются на одной сетке кадров, так что
-    достаточно сравнить объекты внутри каждого кадра (numpy). Без этого
-    перебор всех пар за весь ролик — O(N^2) по тысячам треков и
-    десятки минут на одно видео."""
+    """Pairs of objects that were closer than thresh "body lengths" in at least
+    one frame. All objects are sampled on the same frame grid, so it is
+    enough to compare objects within each frame (numpy). Without this,
+    enumerating all pairs over the whole clip is O(N^2) over thousands of tracks
+    and tens of minutes per video."""
     by_t = {}
     for key, samples in all_objs.items():
         for s in samples:
@@ -1019,26 +1019,26 @@ def _was_moving_before(samples, t0, window=PRE_CONTACT_SEC, min_speed=MOVING_SPE
 
 
 def _object_still_run_after(samples, t0, still_speed=STILL_SPEED, max_gap=2.0):
-    """Возвращает (t_end_of_stop) если объект, начиная примерно с t0,
-    непрерывно (с учётом max_gap) держит speed < still_speed минимум
-    STILL_HOLD_SEC секунд; иначе None. t_end — момент, когда объект СНОВА
-    начал двигаться (или последний сэмпл трека, если так и не поехал)."""
+    """Returns (t_end_of_stop) if the object, starting at roughly t0,
+    continuously (allowing for max_gap) keeps speed < still_speed for at least
+    STILL_HOLD_SEC seconds; otherwise None. t_end is the moment the object
+    started moving AGAIN (or the last sample of the track if it never moved)."""
     still = [s for s in samples if s["t"] >= t0 - 1e-6]
     if not still:
         return None
     runs = sample_runs(still, lambda s: s["speed"] < still_speed, max_gap)
     for s, e in runs:
-        if s <= t0 + 1.0 and e - s >= STILL_HOLD_SEC:  # остановка началась вскоре после t0
+        if s <= t0 + 1.0 and e - s >= STILL_HOLD_SEC:  # the stop began shortly after t0
             return e
     return None
 
 
 def _brake_events(samples, window_sec=2.0, min_speed=MOVING_SPEED, max_gap=1.5):
-    """Интервалы резкого торможения без учёта другого объекта: скорость
-    падает с >= min_speed до < min_speed*(1-BRAKE_DROP_RATIO) в пределах
-    window_sec. Дешёвый одиночный сигнал (как _max_brake_ratio в
-    RiskEstimator, но не каузально и на явном скользящем окне, а не на
-    фиксированной истории из RISK_HISTORY сэмплов)."""
+    """Hard-braking intervals without regard to another object: speed
+    drops from >= min_speed to < min_speed*(1-BRAKE_DROP_RATIO) within
+    window_sec. A cheap single-object signal (like _max_brake_ratio in
+    RiskEstimator, but non-causal and on an explicit sliding window rather than
+    a fixed history of RISK_HISTORY samples)."""
     events = []
     n = len(samples)
     for i in range(n):
@@ -1055,32 +1055,32 @@ def _brake_events(samples, window_sec=2.0, min_speed=MOVING_SPEED, max_gap=1.5):
 
 
 def detect_accidents_and_near_misses(vehicle_objs, person_objs, max_dt=0.6, return_ids=False):
-    """ДТП и опасные сближения — единственные два класса, не завязанные
-    на зоны камеры (чистая кинематика треков), но и единственные, где
-    совсем нет готового учебного сигнала — это первая эвристическая
-    попытка, требующая калибровки на реальной разметке.
+    """Accidents and near misses — the only two classes not tied to the
+    camera zones (pure track kinematics), but also the only ones with no
+    ready-made training signal at all — this is a first heuristic
+    attempt that needs calibration on real annotations.
 
-    accident: пара объектов (машина-машина или машина-пешеход) сближается
-    до dist_norm < ACCIDENT_DIST_NORM ("боксы фактически совместились") И
-    после этого хотя бы один из них останавливается (speed < STILL_SPEED)
-    минимум STILL_HOLD_SEC подряд. Именно требование "остановки после
-    контакта" — попытка отсечь ложные срабатывания от простого визуального
-    перекрытия боксов из-за перспективы (машины на разных полосах/разной
-    глубине сцены, боксы которых пересекаются на 2D-кадре, но физически
-    не соприкасаются) — если после "контакта" оба как ни в чём не бывало
-    продолжают ехать, это, скорее всего, не авария, а перспективный
-    артефакт трекинга.
+    accident: a pair of objects (car-car or car-pedestrian) closes in
+    to dist_norm < ACCIDENT_DIST_NORM ("the boxes effectively coincided") AND
+    after that at least one of them stops (speed < STILL_SPEED)
+    for at least STILL_HOLD_SEC in a row. The "stop after
+    contact" requirement is an attempt to cut false positives from plain visual
+    box overlap due to perspective (cars in different lanes/at different
+    scene depths whose boxes intersect in the 2D frame but physically
+    do not touch) — if after the "contact" both carry on
+    driving as if nothing happened, it is most likely not a crash but a perspective
+    tracking artefact.
 
-    near_miss: либо (а) пара сблизилась до DANGER_DIST_NORM с закрытием
-    достаточно быстрым, чтобы TTC < TTC_DANGER_NONCAUSAL, но БЕЗ контакта
-    (dist_norm никогда не опускался ниже ACCIDENT_DIST_NORM) и затем разошлась,
-    либо (б) отдельно взятый объект резко затормозил (_brake_events) не
-    находясь под уже засчитанным accident. (а) специфичнее и вероятнее
-    точен; (б) — грубый одиночный сигнал (резкое торможение бывает и без
-    угрозы столкновения, например перед обычным красным) и даст больше
-    FP — при калибровке через evaluate.py --per-video в первую очередь
-    смотреть сюда, если near_miss ложно сработает слишком часто; при
-    необходимости (б) можно просто выключить, оставив только (а)."""
+    near_miss: either (a) the pair closed to DANGER_DIST_NORM with a closing speed
+    high enough for TTC < TTC_DANGER_NONCAUSAL, but WITHOUT contact
+    (dist_norm never dropped below ACCIDENT_DIST_NORM) and then separated,
+    or (b) a single object braked hard (_brake_events) while not
+    already covered by a counted accident. (a) is more specific and more likely
+    accurate; (b) is a rough single-object signal (hard braking also happens without
+    a collision threat, e.g. before an ordinary red) and gives more
+    FP — when calibrating with evaluate.py --per-video, look here
+    first if near_miss fires falsely too often; if
+    needed, (b) can simply be switched off, keeping only (a)."""
     all_objs = {}
     for oid, samples in vehicle_objs.items():
         all_objs[("v", oid)] = samples
@@ -1105,29 +1105,29 @@ def detect_accidents_and_near_misses(vehicle_objs, person_objs, max_dt=0.6, retu
             t_end_b = _object_still_run_after(sb, s)
             t_end = max(t_end_a or 0.0, t_end_b or 0.0)
             if t_end_a is None and t_end_b is None:
-                continue  # контакт был, но оба продолжили ехать — вероятно, перспективный артефакт
+                continue  # there was contact, but both kept driving — probably a perspective artefact
             if not (_was_moving_before(sa, s) or _was_moving_before(sb, s)):
-                continue  # оба стояли ещё до "контакта" — это соседи в очереди, чьи боксы
-                          # перекрылись в перспективе, а не ДТП
+                continue  # both were standing before the "contact" — queue neighbours whose boxes
+                          # overlapped in perspective, not a crash
             accidents.append([round(s, 2), round(max(t_end, e), 2), "accident"])
             accident_pairs.append((ka[1] if ka[0] == "v" else kb[1]))
             had_accident = True
         if had_accident:
-            continue  # эта пара уже "потрачена" на accident — не дублируем near_miss
+            continue  # this pair is already "used up" by accident — do not duplicate it as near_miss
 
         min_dist, min_t = None, None
         for t, d, closing in approach:
             if d < DANGER_DIST_NORM and (min_dist is None or d < min_dist):
                 min_dist, min_t = d, t
         if min_dist is not None and min_t is not None:
-            # ищем момент вокруг минимума, где TTC был опасным
+            # look for the moment around the minimum where TTC was dangerous
             danger_t = None
             for t, d, closing in approach:
                 if closing and closing > 1e-6 and d / closing < TTC_DANGER_NONCAUSAL \
                         and abs(t - min_t) <= 3.0:
                     danger_t = t if danger_t is None else min(danger_t, t)
             if danger_t is not None:
-                # окно near_miss: от начала опасного сближения до расхождения обратно за DANGER_DIST_NORM
+                # near_miss window: from the dangerous approach until they separate past DANGER_DIST_NORM
                 end_t = min_t
                 for t, d, _ in approach:
                     if t >= min_t and d >= DANGER_DIST_NORM:
@@ -1139,8 +1139,8 @@ def detect_accidents_and_near_misses(vehicle_objs, person_objs, max_dt=0.6, retu
                     near_miss_candidates.append((danger_t, end_t,
                                                   ka[1] if ka[0] == "v" else kb[1]))
 
-    # (б) резкое торможение без привязки к конкретной другой машине — только
-    # для объектов, ещё не отметившихся в accident выше в этом же интервале
+    # (b) hard braking not tied to a specific other car — only
+    # for objects not already flagged in accident above in the same interval
     accident_intervals_by_obj = {}
     for (s, e, _), oid in zip(accidents, accident_pairs):
         accident_intervals_by_obj.setdefault(oid, []).append((s, e))
@@ -1150,7 +1150,7 @@ def detect_accidents_and_near_misses(vehicle_objs, person_objs, max_dt=0.6, retu
             if not any(overlap((s, e), b) > 0 for b in busy):
                 near_miss_candidates.append((s, e, oid))
 
-    # склеиваем near_miss кандидаты по объекту (та же машина, близкие интервалы)
+    # merge near_miss candidates per object (same car, close intervals)
     by_obj: dict = {}
     for s, e, oid in near_miss_candidates:
         by_obj.setdefault(oid, []).append((s, e))
@@ -1166,17 +1166,17 @@ def detect_accidents_and_near_misses(vehicle_objs, person_objs, max_dt=0.6, retu
 
 
 def merge_same_class_overlaps(events):
-    """Пересекающиеся сегменты одного класса — по FAQ задания это ОДНО
-    событие ("два события одного класса одновременно -> один сегмент,
-    покрывающий оба"), а не повод терять один из них.
+    """Overlapping segments of one class are ONE event per the task FAQ
+    ("two events of one class at the same time -> one segment
+    covering both"), not a reason to lose one of them.
 
-    Раньше здесь было drop_same_class_overlaps, копирующее поведение
-    run_submission.py (при пересечении внутри класса оставляет более
-    ранний сегмент, остальные роняет как FP/дубликат) — как safety-net на
-    стороне харнесса это разумно, но если мы САМИ так фильтруем перед
-    отправкой, мы теряем recall каждый раз, когда две РАЗНЫЕ машины
-    одновременно стоят/жгут красный: одно из двух настоящих событий
-    молча исчезает вместо объединения в покрывающий сегмент."""
+    Previously this was drop_same_class_overlaps, copying the behaviour of
+    run_submission.py (on an overlap within a class it keeps the earlier
+    segment and drops the rest as FP/duplicate) — as a safety net on the
+    harness side this is reasonable, but if WE filter this way before
+    submitting, we lose recall every time two DIFFERENT cars
+    stand/run a red at the same time: one of two real events
+    silently disappears instead of being merged into a covering segment."""
     by_label: dict[str, list[tuple[float, float]]] = {}
     for s, e, lbl in events:
         by_label.setdefault(lbl, []).append((s, e))
@@ -1188,42 +1188,42 @@ def merge_same_class_overlaps(events):
 
 
 def compute_events(records, zones, light_samples=None, classes=None):
-    """Единая точка входа без файлового I/O — её вызывает pipeline.infer().
+    """Single entry point without file I/O — called by pipeline.infer().
 
     Args:
-        records: список записей треков (уже со stitched_id, см.
+        records: list of track records (already with stitched_id, see
             stitch_tracks.stitch_records()).
-        zones: dict {zone_name: np.ndarray[[x,y],...]} — как из load_zones().
-            Зоны "проезжей части" для jaywalking собираются по конвенции
-            имени: 'roadway' и всё, что начинается с 'roadway_' или
+        zones: dict {zone_name: np.ndarray[[x,y],...]} — as from load_zones().
+            The "carriageway" zones for jaywalking are collected by naming
+            convention: 'roadway' and anything starting with 'roadway_' or
             'crossroad' (roadway, roadway_before_queue, crossroad,
-            crossroad_2, ...). Зоны легитимных переходов ('crossing_far',
-            'crossing_near', любое 'crossing_*') автоматически исключаются
-            из проезжей части, даже если геометрически пересекаются.
-        light_samples: список [t_sec, state] из light_state.run_light_state(),
-            или None если light_roi не размечен / решили не считать
+            crossroad_2, ...). Legitimate crossing zones ('crossing_far',
+            'crossing_near', any 'crossing_*') are automatically excluded
+            from the carriageway, even if they intersect geometrically.
+        light_samples: list of [t_sec, state] from light_state.run_light_state(),
+            or None if light_roi is not annotated / we chose not to compute
             red_light/stop_line.
-        classes: какие классы считать (None — все). Правила остальных классов
-            не запускаются вовсе: на загруженном 10-минутном видео
-            экспериментальные правила — десятки секунд внутри бюджета.
+        classes: which classes to compute (None — all). Rules for the other classes
+            are not run at all: on a busy 10-minute video the
+            experimental rules cost tens of seconds of the budget.
 
     Returns:
-        Список [start_sec, end_sec, label] событий, уже без пересечений
-        внутри класса.
+        List of [start_sec, end_sec, label] events, already without overlaps
+        within a class.
     """
     events = compute_events_debug(records, zones, light_samples, classes)
     return merge_same_class_overlaps([e[:3] for e in events])
 
 
 def _scene_zone_sets(zones):
-    """Смысловые группы зон сцены (общие для compute_events и _debug):
-      roadway    — проезжая часть (roadway*, crossroad*);
-      ped_safe   — где пешеходу можно: переходы (crossing*) и тротуарные
-                   островки (sidewalk*: они внутри полигона crossroad, и
-                   люди, идущие с одной зебры на другую через островок,
-                   давали большинство ложных jaywalking);
-      road       — где стоящая машина мешает движению (stopped_vehicle):
-                   проезжая часть + переходы + очередь + стоп-линия."""
+    """Semantic groups of scene zones (shared by compute_events and _debug):
+      roadway    — carriageway (roadway*, crossroad*);
+      ped_safe   — where a pedestrian is allowed: crossings (crossing*) and sidewalk
+                   islands (sidewalk*: they lie inside the crossroad polygon, and
+                   people walking from one zebra to another across an island
+                   produced most of the false jaywalking);
+      road       — where a standing car obstructs traffic (stopped_vehicle):
+                   carriageway + crossings + queue + stop line."""
     roadway = _zones_by_prefix(zones, ("roadway", "crossroad"))
     crossing = _zones_by_prefix(zones, ("crossing",))
     ped_safe = crossing | _zones_by_prefix(zones, ("sidewalk",))
@@ -1232,23 +1232,23 @@ def _scene_zone_sets(zones):
 
 
 def compute_events_debug(records, zones, light_samples=None, classes=None):
-    """Все правила с привязкой к объекту. compute_events() — это же самое
-    плюс merge_same_class_overlaps (одна реализация: сабмит и визуализация
-    не могут разойтись).
+    """All rules, with the offending object attached. compute_events() is the same
+    plus merge_same_class_overlaps (a single implementation: the submission and the
+    visualisation cannot diverge).
 
-    Отличия от compute_events():
-      - события НЕ проходят через merge_same_class_overlaps: два разных
-        нарушителя, пересекающиеся по времени, остаются двумя отдельными
-        записями, а не одним покрывающим сегментом — иначе теряется
-        привязка к конкретному объекту;
-      - каждая запись — [start, end, label, object_id], где object_id это
-        stitched_id виновника (см. stitch_tracks.py). Для "congestion"
-        object_id всегда None: это событие про кластер из нескольких
-        машин сразу, а не про одну — используйте zones['queue_zone'] +
-        координаты боксов в этот момент, чтобы подсветить весь кластер.
+    Differences from compute_events():
+      - events do NOT go through merge_same_class_overlaps: two different
+        violators overlapping in time remain two separate
+        records rather than one covering segment — otherwise the
+        link to a specific object is lost;
+      - each record is [start, end, label, object_id], where object_id is the
+        stitched_id of the offender (see stitch_tracks.py). For "congestion"
+        object_id is always None: this event is about a cluster of several
+        cars at once, not about one — use zones['queue_zone'] +
+        the box coordinates at that moment to highlight the whole cluster.
 
-    Возвращает список [start, end, label, object_id_or_None], отсортированный
-    по времени начала.
+    Returns a list of [start, end, label, object_id_or_None], sorted
+    by start time.
     """
     groups = group_by_object(records)
     vehicle_objs = {oid: annotate(recs, zones) for oid, recs in groups.items()
@@ -1265,13 +1265,13 @@ def compute_events_debug(records, zones, light_samples=None, classes=None):
     out = []
 
     def run(label, fn, per_object=True):
-        """Одно правило: только если его класс запрошен, и с собственной
-        страховкой — падение экспериментального правила на незнакомой сцене
-        не должно стирать остальные классы видео."""
+        """One rule: only if its class is requested, and with its own
+        safety net — a crash of an experimental rule on an unfamiliar scene
+        must not wipe out the video's other classes."""
         try:
             res = fn()
-        except Exception as exc:  # noqa: BLE001 — логируем и продолжаем
-            print(f"[rules] {label} упало: {exc!r}")
+        except Exception as exc:  # noqa: BLE001 — log and continue
+            print(f"[rules] {label} failed: {exc!r}")
             return [], []
         events, ids = res if per_object else (res, [None] * len(res))
         out.extend([s, e, lbl, oid] for (s, e, lbl), oid in zip(events, ids))
@@ -1297,8 +1297,8 @@ def compute_events_debug(records, zones, light_samples=None, classes=None):
                 vehicle_objs, light, wait_zone=stop_zone, junction_zones=_zones_by_prefix(zones, ("crossroad",)),
                 return_ids=True))
         if want("stop_line"):
-            # stop_line — "встал за стоп-линией, НЕ въехав на перекрёсток"; кто потом
-            # проехал на красный, тот red_light (C3902, 97 с: мотоцикл получал оба)
+            # stop_line — "stopped past the stop line WITHOUT entering the junction"; whoever
+            # then ran the red is red_light (C3902, 97 s: a motorcycle got both)
             red_set = set(red_ids)
 
             def stop_line():
@@ -1326,8 +1326,8 @@ def compute_events_debug(records, zones, light_samples=None, classes=None):
         def accidents():
             acc, _acc_ids, nm, nm_ids = detect_accidents_and_near_misses(
                 vehicle_objs, person_objs, return_ids=True)
-            # accident — про ДВА объекта сразу; object_id одного "виновника"
-            # вводил бы в заблуждение при подсветке, поэтому None (как у congestion)
+            # accident is about TWO objects at once; the object_id of one "offender"
+            # would be misleading when highlighting, hence None (as for congestion)
             return acc + nm, [None] * len(acc) + list(nm_ids)
         run("accident/near_miss", accidents)
 
@@ -1338,9 +1338,9 @@ def compute_events_debug(records, zones, light_samples=None, classes=None):
 # ---------------------------------------------------------------- main (dev only)
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tracks", required=True, help="*.stitched.json из stitch_tracks.py")
+    ap.add_argument("--tracks", required=True, help="*.stitched.json from stitch_tracks.py")
     ap.add_argument("--zones", required=True)
-    ap.add_argument("--light", default=None, help="*.json из light_state.py (для red_light/stop_line)")
+    ap.add_argument("--light", default=None, help="*.json from light_state.py (for red_light/stop_line)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -1363,7 +1363,7 @@ def main():
     by_class = {}
     for _, _, lbl in events:
         by_class[lbl] = by_class.get(lbl, 0) + 1
-    print(f"{meta['video']}: {len(events)} событий -> {out_path}  {by_class}")
+    print(f"{meta['video']}: {len(events)} events -> {out_path}  {by_class}")
 
 
 if __name__ == "__main__":

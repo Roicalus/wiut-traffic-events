@@ -1,11 +1,11 @@
-"""check_alignment.py — насколько камера сдвинута в каждом видео и легли ли зоны.
+"""check_alignment.py — how far the camera is shifted in each video and whether the zones fit.
 
     python tools/check_alignment.py --videos samples
 
-Для каждого видео печатает найденный сдвиг и пишет debug/align_<видео>.jpg:
-слева — кадр с совмещёнными зонами, справа — крупно светофор (light_roi)
-ДО (красная рамка) и ПОСЛЕ (зелёная) совмещения. Зелёная рамка должна
-плотно накрывать корпус светофора на КАЖДОМ видео.
+For each video it prints the estimated shift and writes debug/align_<video>.jpg:
+on the left, the frame with the aligned zones; on the right, a close-up of the traffic light (light_roi)
+BEFORE (red box) and AFTER (green) alignment. The green box must
+tightly cover the traffic-light housing on EVERY video.
 """
 import argparse
 import sys
@@ -39,9 +39,9 @@ def main():
     for path in videos:
         frame = align.first_frame(path)
         if frame is None:
-            print(f"[{path.name}] не читается")
+            print(f"[{path.name}] unreadable")
             continue
-        M, rep = align.estimate_video(path)      # то же, что в pipeline
+        M, rep = align.estimate_video(path)      # same as in the pipeline
         z_new = align.transform_zones(zones, M)
         print(f"[{path.name}] {rep}")
 

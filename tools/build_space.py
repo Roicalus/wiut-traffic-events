@@ -1,13 +1,13 @@
-"""build_space.py — собирает папку для Hugging Face Space с живым демо.
+"""build_space.py — builds the folder for the Hugging Face Space with the live demo.
 
     python tools/build_space.py --out ../space
-    cd ../space && git push                   # в репозиторий Space (см. README)
+    cd ../space && git push                   # to the Space repository (see README)
 
-В Space попадает ровно код сабмита (solution.py, src/, веса, зоны и опорные
-кадры) плюс demo/app.py как app.py. requirements.txt — из demo/;
-packages.txt — системные библиотеки для OpenCV. Железо Space — ZeroGPU:
-детектор идёт в @spaces.GPU, без GPU — на CPU (см. demo/app.py). Веса и
-картинки — через Git LFS (Hugging Face не принимает бинарники без него).
+The Space gets exactly the submission code (solution.py, src/, weights, zones and reference
+frames) plus demo/app.py as app.py. requirements.txt comes from demo/;
+packages.txt lists the system libraries for OpenCV. Space hardware is ZeroGPU:
+the detector runs in @spaces.GPU, without a GPU on CPU (see demo/app.py). Weights and
+images go through Git LFS (Hugging Face does not accept binaries without it).
 """
 from __future__ import annotations
 
@@ -40,8 +40,8 @@ annotated video back. Code: {repo}
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", required=True, help="папка Space (создаётся/обновляется)")
-    ap.add_argument("--repo", default="(GitHub link)", help="ссылка на репозиторий для README Space")
+    ap.add_argument("--out", required=True, help="Space folder (created/updated)")
+    ap.add_argument("--repo", default="(GitHub link)", help="repository link for the Space README")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -51,13 +51,13 @@ def main():
     for name in FILES:
         shutil.copy2(ROOT / name, out / name)
     app = (ROOT / "demo" / "app.py").read_text(encoding="utf-8")
-    # в Space app.py лежит в корне, рядом с solution.py
+    # in the Space, app.py sits in the root, next to solution.py
     app = app.replace("ROOT = Path(__file__).resolve().parent.parent", "ROOT = Path(__file__).resolve().parent")
     app = app.replace('server_name=os.environ.get("DEMO_HOST", "127.0.0.1")', 'server_name=os.environ.get("DEMO_HOST", "0.0.0.0")')
     (out / "app.py").write_text(app, encoding="utf-8", newline="\n")
     shutil.copy2(ROOT / "demo" / "requirements.txt", out / "requirements.txt")
     (out / "packages.txt").write_text("libgl1\nlibglib2.0-0\n", encoding="utf-8", newline="\n")
-    attrs = out / ".gitattributes"          # у Space свой файл с правилами LFS — дополняем
+    attrs = out / ".gitattributes"          # the Space has its own LFS rules file — append to it
     lines = attrs.read_text(encoding="utf-8").splitlines() if attrs.exists() else []
     for pattern in ("*.pt", "*.jpg"):
         if not any(line.split()[:1] == [pattern] for line in lines):
@@ -66,7 +66,7 @@ def main():
     import gradio
     (out / "README.md").write_text(SPACE_README.format(gradio=gradio.__version__, repo=args.repo),
                                    encoding="utf-8", newline="\n")
-    print(f"Space собран: {out.resolve()}")
+    print(f"Space built: {out.resolve()}")
 
 
 if __name__ == "__main__":

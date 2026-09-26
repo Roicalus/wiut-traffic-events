@@ -1,13 +1,13 @@
-"""analyze.py — полный разбор одного ролика для живого демо (demo/app.py).
+"""analyze.py — full analysis of one clip for the live demo (demo/app.py).
 
-Тот же код, что в сабмите (pipeline.extract/infer, RiskEstimator), плюс то,
-что нужно посетителю сайта: видео с разметкой, таймлайн, кривая риска, JSON.
+The same code as in the submission (pipeline.extract/infer, RiskEstimator), plus what
+a site visitor needs: an annotated video, a timeline, the risk curve, JSON.
 
-На CPU (бесплатный хостинг) 4K декодируется медленно, поэтому ролик сначала
-пережимается в DEMO_WIDTH x ... при DEMO_FPS (ffmpeg из imageio-ffmpeg), а
-детектор идёт на меньшем входе. Правила работают в пикселях опорного 4K-кадра
-(pipeline.to_reference_pixels), так что их пороги те же, что в сабмите;
-время событий — в секундах исходного ролика.
+On CPU (free hosting) 4K decodes slowly, so the clip is first
+re-encoded to DEMO_WIDTH x ... at DEMO_FPS (ffmpeg from imageio-ffmpeg), and
+the detector runs on a smaller input. The rules work in pixels of the 4K reference frame
+(pipeline.to_reference_pixels), so their thresholds are the same as in the submission;
+event times are in seconds of the original clip.
 """
 from __future__ import annotations
 
@@ -24,16 +24,16 @@ import solution
 from src import pipeline, render, risk
 from src.rules import compute_events_debug
 
-# Настройки под железо хостинга — переменными окружения, без правки кода.
-MAX_DURATION_SEC = float(os.environ.get("DEMO_MAX_SEC", 150))    # до 2.5 минут
+# Settings for the hosting hardware — via environment variables, no code edits.
+MAX_DURATION_SEC = float(os.environ.get("DEMO_MAX_SEC", 150))    # up to 2.5 minutes
 DEMO_WIDTH = int(os.environ.get("DEMO_WIDTH", 1920))
 DEMO_FPS = float(os.environ.get("DEMO_FPS", 15))
-DEMO_TRACKER = {"imgsz": int(os.environ.get("DEMO_IMGSZ", 960)), "stride": 3}   # 5 Гц при 15 fps
-DEMO_RISK_STRIDE = 3                          # каждый 3-й кадр — детектор Part B (внутри — свой stride)
+DEMO_TRACKER = {"imgsz": int(os.environ.get("DEMO_IMGSZ", 960)), "stride": 3}   # 5 Hz at 15 fps
+DEMO_RISK_STRIDE = 3                          # Part B detector on every 3rd frame (it has its own stride inside)
 
 
 class VideoError(ValueError):
-    """Ролик не подходит (не читается, слишком длинный); текст — для посетителя сайта."""
+    """The clip is unusable (unreadable, too long); the text is for the site visitor."""
 
 
 def probe(path) -> dict:
@@ -50,7 +50,7 @@ def probe(path) -> dict:
 
 
 def transcode(src, dst, info, progress=None) -> Path:
-    """Уменьшаем до DEMO_WIDTH и DEMO_FPS, если ролик больше. Без звука."""
+    """Downscale to DEMO_WIDTH and DEMO_FPS if the clip is larger. No audio."""
     if info["width"] <= DEMO_WIDTH and info["fps"] <= DEMO_FPS + 0.5:
         return Path(src)
     import imageio_ffmpeg
@@ -58,7 +58,7 @@ def transcode(src, dst, info, progress=None) -> Path:
            "-vf", f"scale={min(DEMO_WIDTH, info['width'])}:-2,fps={DEMO_FPS}",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", str(dst)]
     proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, errors="replace")
-    for line in proc.stderr:            # ffmpeg пишет прогресс в stderr: time=00:00:12.34
+    for line in proc.stderr:            # ffmpeg writes progress to stderr: time=00:00:12.34
         m = re.search(r"time=(\d+):(\d+):([\d.]+)", line)
         if m and progress is not None:
             t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
@@ -69,9 +69,9 @@ def transcode(src, dst, info, progress=None) -> Path:
 
 
 def risk_pass(path, progress=None) -> tuple[list, list]:
-    """Part B так же, как в харнессе: кадры по порядку, reset/step. Детектор
-    вызывается на каждом DEMO_RISK_STRIDE-м кадре (как --risk-stride), в
-    остальных кадрах держится последний скор."""
+    """Part B the same way as in the harness: frames in order, reset/step. The detector
+    is called on every DEMO_RISK_STRIDE-th frame (like --risk-stride); on
+    the other frames the last score is held."""
     info = probe(path)
     est = risk.RiskEstimator()
     est.reset({"video_id": Path(path).name, "fps": info["fps"], "width": info["width"],
@@ -97,7 +97,7 @@ def risk_pass(path, progress=None) -> tuple[list, list]:
 
 
 def prepare(video_path, work_dir, progress=None) -> tuple[Path, dict]:
-    """CPU: проверка и пережатие. Возвращает (путь к рабочему ролику, info)."""
+    """CPU: validation and re-encoding. Returns (path to the working clip, info)."""
     say = progress or (lambda frac, msg: None)
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -110,8 +110,8 @@ def prepare(video_path, work_dir, progress=None) -> tuple[Path, dict]:
 
 
 def compute(path, progress=None) -> dict:
-    """Детектор и правила: Part A и Part B. На ZeroGPU — внутри @spaces.GPU,
-    поэтому возвращает только сериализуемое."""
+    """Detector and rules: Part A and Part B. On ZeroGPU it runs inside @spaces.GPU,
+    so it returns only serializable data."""
     say = progress or (lambda frac, msg: None)
     t1 = time.perf_counter()
     say(0.25, "Part A: detector, tracker, traffic light")
@@ -130,7 +130,7 @@ def compute(path, progress=None) -> dict:
 
 
 def finish(video_path, path, info, work_dir, computed, progress=None) -> dict:
-    """CPU: видео с разметкой и events.json."""
+    """CPU: annotated video and events.json."""
     say = progress or (lambda frac, msg: None)
     work = Path(work_dir)
     obs, events, debug_events = computed["obs"], computed["events"], computed["debug_events"]
@@ -161,7 +161,7 @@ def finish(video_path, path, info, work_dir, computed, progress=None) -> dict:
 
 
 def analyze(video_path, work_dir, progress=None) -> dict:
-    """Все три этапа подряд (локально, без ZeroGPU). progress(frac, message)."""
+    """All three stages in a row (locally, without ZeroGPU). progress(frac, message)."""
     t0 = time.perf_counter()
     path, info = prepare(video_path, work_dir, progress)
     t_prep = time.perf_counter() - t0

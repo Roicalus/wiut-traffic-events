@@ -1,16 +1,16 @@
-"""postprocess.py — единый финальный постпроцессинг сегментов Part A.
+"""postprocess.py — the single final post-processing of Part A segments.
 
-Правила (rules.py, obstacle_fire.py) выдают "сырые" сегменты; здесь они
-приводятся к виду, который лучше матчится по tIoU:
-  1. обрезка по [0, duration];
-  2. склейка фрагментов одного класса с разрывом <= merge_gap
-     (FAQ: одновременные события одного класса -> один сегмент);
-  3. выброс коротышей < min_dur.
+The rules (rules.py, obstacle_fire.py) emit "raw" segments; here they are
+brought to a form that matches better under tIoU:
+  1. clipping to [0, duration];
+  2. merging fragments of the same class with a gap <= merge_gap
+     (FAQ: simultaneous events of one class -> one segment);
+  3. dropping short ones < min_dur.
 
-Параметры — ПО КЛАССУ, потому что у классов разная природа длительности
-(jaywalking рвётся на окклюзиях, congestion длится десятки секунд, а
-red_light — 2-4 с, и склейка соседних проездов разных машин с gap=3 с
-убила бы IoU). Подбирать на своей разметке: tools/dev_loop.py.
+Parameters are PER CLASS because classes differ in the nature of their duration
+(jaywalking breaks up on occlusions, congestion lasts tens of seconds, while
+red_light lasts 2-4 s, and merging adjacent passes of different cars with gap=3 s
+would kill the IoU). Tune on our own labels: tools/dev_loop.py.
 """
 from __future__ import annotations
 
@@ -32,12 +32,12 @@ CLASS_POST: dict[str, tuple[float, float]] = {
     "near_miss":           (1.0, 0.5),
     "road_obstacle":       (2.0, 4.0),
     "fire_smoke":          (3.0, 2.0),
-    "curb_mount":          (1.0, 0.3),   # диагностика, не отправляется
+    "curb_mount":          (1.0, 0.3),   # diagnostic, not submitted
 }
 DEFAULT_POST = (0.5, 0.3)
 
 
-EDGE_SNAP_SEC = 1.0   # событие ближе к краю ролика — продолжается за край: 0 / duration (как в разметке)
+EDGE_SNAP_SEC = 1.0   # an event closer than this to the clip edge continues past it: 0 / duration (as in the labels)
 
 
 def postprocess(events, duration: float | None = None, classes=None,
@@ -69,7 +69,7 @@ def postprocess(events, duration: float | None = None, classes=None,
                 continue
             s = 0.0 if s <= EDGE_SNAP_SEC else round(s, 2)
             if duration is not None and e >= duration - EDGE_SNAP_SEC:
-                e = math.floor(duration * 100) / 100     # вниз: после округления не больше duration
+                e = math.floor(duration * 100) / 100     # round down: must not exceed duration after rounding
             else:
                 e = round(e, 2)
             out.append([s, e, lbl])

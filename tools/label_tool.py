@@ -1,23 +1,23 @@
 """
-label_tool.py — ручная разметка событий на одном видео под формат
-ground_truth.json хакатона (см. "Output format & interface" в задании).
+label_tool.py — manual event labelling on a single video in the hackathon's
+ground_truth.json format (see "Output format & interface" in the task).
 
-Запуск:
+Usage:
     python label_tool.py --video samples/C3896.MP4 --out labels/C3896.json
 
-Управление:
-    SPACE   — пауза / воспроизведение
-    A / D   — шаг на 1 кадр назад/вперёд (на паузе)
-    J / L   — прыжок на 1 сек назад/вперёд
-    S       — отметить НАЧАЛО события (текущее время)
-    E       — отметить КОНЕЦ события -> выбрать класс в консоли,
-              событие добавляется в список
-    U       — отменить последнее добавленное событие
-    Q       — сохранить и выйти
+Controls:
+    SPACE   — pause / play
+    A / D   — step 1 frame back/forward (while paused)
+    J / L   — jump 1 s back/forward
+    S       — mark the event START (current time)
+    E       — mark the event END -> pick the class in the console,
+              the event is added to the list
+    U       — undo the last added event
+    Q       — save and quit
 
-Примечание: перемотка через cap.set(POS_FRAMES) на каждом кадре — не
-самая быстрая, но для точной покадровой разметки 4 роликов по 5-6 минут
-этого достаточно и она надёжнее, чем ручной подсчёт кадров.
+Note: seeking via cap.set(POS_FRAMES) on every frame is not
+the fastest, but for accurate frame-by-frame labelling of 4 clips of 5-6 minutes
+it is enough, and it is more reliable than counting frames by hand.
 """
 import argparse
 import json
@@ -89,27 +89,27 @@ def main():
             frame_idx = min(n_frames - 1, frame_idx + int(fps))
         elif key == ord('s'):
             pending_start = frame_idx / fps
-            print(f"START отмечен на {pending_start:.2f}s")
+            print(f"START marked at {pending_start:.2f}s")
         elif key == ord('e'):
             if pending_start is None:
-                print("Сначала отметь START клавишей S")
+                print("Mark START with the S key first")
             else:
                 t_end = frame_idx / fps
                 if t_end <= pending_start:
-                    print("END должен быть позже START, пропущено")
+                    print("END must be later than START, skipped")
                 else:
-                    print("Классы:", ", ".join(f"{i}:{c}" for i, c in enumerate(CLASSES)))
-                    raw = input("Номер класса: ").strip()
+                    print("Classes:", ", ".join(f"{i}:{c}" for i, c in enumerate(CLASSES)))
+                    raw = input("Class number: ").strip()
                     if raw.isdigit() and 0 <= int(raw) < len(CLASSES):
                         lbl = CLASSES[int(raw)]
                         events.append([round(pending_start, 2), round(t_end, 2), lbl])
-                        print(f"Добавлено: [{pending_start:.2f}, {t_end:.2f}, {lbl}]")
+                        print(f"Added: [{pending_start:.2f}, {t_end:.2f}, {lbl}]")
                     else:
-                        print("Некорректный номер, событие не добавлено")
+                        print("Invalid number, event not added")
                 pending_start = None
         elif key == ord('u') and events:
             removed = events.pop()
-            print(f"Отменено: {removed}")
+            print(f"Undone: {removed}")
         elif key == ord('q'):
             break
 
@@ -118,13 +118,13 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
 
-    # предупреждение о пересечениях внутри одного класса — харнесс их
-    # всё равно дропнет (оставит более ранний), лучше объединить руками
+    # warning about overlaps within one class — the harness will drop them
+    # anyway (keeping the earlier one), better to merge them by hand
     by_class = {}
     for s, e, lbl in events:
         for s2, e2 in by_class.get(lbl, []):
             if s < e2 and s2 < e:
-                print(f"ВНИМАНИЕ: пересечение в классе {lbl}: [{s2},{e2}] и [{s},{e}]")
+                print(f"WARNING: overlap in class {lbl}: [{s2},{e2}] and [{s},{e}]")
         by_class.setdefault(lbl, []).append((s, e))
 
     events.sort(key=lambda x: x[0])
@@ -136,7 +136,7 @@ def main():
     }
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"Сохранено {len(events)} событий в {out_path}")
+    print(f"Saved {len(events)} events to {out_path}")
 
 
 if __name__ == "__main__":

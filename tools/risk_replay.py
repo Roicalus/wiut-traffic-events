@@ -1,12 +1,12 @@
-"""risk_replay.py — калибровка Part B без повторного инференса.
+"""risk_replay.py — Part B calibration without re-running inference.
 
-1) dump: один проход по видео так же, как харнесс (каждый кадр декодируется,
-   детектор RiskEstimator._detect — на каждом BASE_STRIDE-м), детекции
-   кэшируются в cache/risk/<видео>.pkl.gz. Заодно печатает, сколько времени
-   ушло на декодирование и на детектор.
-2) score: RiskScorer (тот же код, что в сабмите) по кэшу — за секунды.
-   Печатает долю кадров с риском >= 0.5, алармы по правилам evaluate.py
-   (прогоны >= 0.5, склейка при паузе < 2 с) и самые длинные из них.
+1) dump: one pass over the video the same way as the harness (every frame is decoded,
+   the RiskEstimator._detect detector runs on every BASE_STRIDE-th one), detections
+   are cached in cache/risk/<video>.pkl.gz. It also prints how much time
+   went into decoding and into the detector.
+2) score: RiskScorer (the same code as in the submission) over the cache — in seconds.
+   Prints the share of frames with risk >= 0.5, alarms by the evaluate.py rules
+   (runs >= 0.5, merged across gaps < 2 s) and the longest of them.
 
     python tools/risk_replay.py dump  --videos samples
     python tools/risk_replay.py score --videos samples
@@ -27,11 +27,11 @@ import cv2
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import solution  # noqa: E402,F401  (сиды, YOLO_OFFLINE)
+import solution  # noqa: E402,F401  (seeds, YOLO_OFFLINE)
 from src import risk  # noqa: E402
 
 CACHE = ROOT / "cache" / "risk"
-THETA, MERGE_GAP = 0.5, 2.0   # как в evaluate.py
+THETA, MERGE_GAP = 0.5, 2.0   # as in evaluate.py
 
 
 def list_videos(src: Path) -> list[Path]:
@@ -67,14 +67,14 @@ def dump(video: Path) -> None:
         pickle.dump({"video": video.name, "fps": fps, "n_frames": idx + 1,
                      "width": est.meta["width"], "height": est.meta["height"],
                      "stride": risk.BASE_STRIDE, "frames": frames}, f, protocol=pickle.HIGHEST_PROTOCOL)
-    print(f"[{video.name}] {dur:.0f}s видео: декод {t_dec:.0f}s ({t_dec / dur:.2f}x), "
-          f"детектор {t_det:.0f}s ({t_det / dur:.2f}x), итого {(t_dec + t_det) / dur:.2f}x", flush=True)
+    print(f"[{video.name}] {dur:.0f}s of video: decode {t_dec:.0f}s ({t_dec / dur:.2f}x), "
+          f"detector {t_det:.0f}s ({t_det / dur:.2f}x), total {(t_dec + t_det) / dur:.2f}x", flush=True)
 
 
 def replay(cached: dict) -> list[list[float]]:
-    """Кривая [t_sec, score] на каждый кадр — как её записал бы харнесс.
-    Как в RiskEstimator: детекции кадра с инференсом попадают в скор на
-    СЛЕДУЮЩЕМ кадре с инференсом (детекция идёт в фоне)."""
+    """A [t_sec, score] curve for every frame — as the harness would record it.
+    As in RiskEstimator: detections of an inference frame reach the score on the
+    NEXT inference frame (detection runs in the background)."""
     w, h = cached["width"], cached["height"]
     scorer = risk.RiskScorer((w, h - int(h * risk.CROP_TOP_FRAC)))
     by_idx = {i: (t, d) for i, t, d in cached["frames"]}
@@ -111,7 +111,7 @@ def apply_overrides(pairs: list[str]) -> None:
     for kv in pairs:
         k, v = kv.split("=", 1)
         if not hasattr(risk, k):
-            raise SystemExit(f"в src/risk.py нет параметра {k}")
+            raise SystemExit(f"src/risk.py has no parameter {k}")
         setattr(risk, k, type(getattr(risk, k))(float(v)) if not isinstance(getattr(risk, k), set) else eval(v))
 
 
@@ -119,9 +119,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["dump", "score"])
     ap.add_argument("--videos", required=True)
-    ap.add_argument("--set", action="append", default=[], help="NAME=VALUE: параметр src/risk.py")
-    ap.add_argument("--gt", default=None, help="разметка: посчитать Score B через evaluate.py")
-    ap.add_argument("--top", type=int, default=5, help="сколько самых длинных алармов показать")
+    ap.add_argument("--set", action="append", default=[], help="NAME=VALUE: a src/risk.py parameter")
+    ap.add_argument("--gt", default=None, help="labels: compute Score B via evaluate.py")
+    ap.add_argument("--top", type=int, default=5, help="how many of the longest alarms to show")
     args = ap.parse_args()
     videos = list_videos(Path(args.videos))
 
@@ -135,11 +135,11 @@ def main():
     for v in videos:
         path = CACHE / f"{v.stem}.pkl.gz"
         if not path.exists():
-            print(f"[{v.name}] нет кэша — сначала: risk_replay.py dump --videos {v}")
+            print(f"[{v.name}] no cache — first run: risk_replay.py dump --videos {v}")
             continue
         with gzip.open(path, "rb") as f:
             cached = pickle.load(f)
-        if "width" not in cached:                 # кэш старого формата
+        if "width" not in cached:                 # old-format cache
             cap = cv2.VideoCapture(str(v))
             cached["width"] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             cached["height"] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -149,14 +149,14 @@ def main():
         hi = sum(s >= THETA for _, s in curve)
         dur = len(curve) / cached["fps"]
         tot_frames, tot_hi, tot_alarms, tot_dur = tot_frames + len(curve), tot_hi + hi, tot_alarms + len(al), tot_dur + dur
-        print(f"[{v.name}] >=0.5: {hi / len(curve):6.1%} кадров, алармов {len(al):3d} "
-              f"({len(al) / dur * 60:.1f}/мин)")
+        print(f"[{v.name}] >=0.5: {hi / len(curve):6.1%} of frames, alarms {len(al):3d} "
+              f"({len(al) / dur * 60:.1f}/min)")
         for a in sorted(al, key=lambda a: a[0] - a[1])[:args.top]:
             print(f"      {a[0]:7.1f}-{a[1]:7.1f}s  ({a[1] - a[0]:5.1f}s, max {a[2]:.2f})")
         pred["videos"][v.name] = {"events": [], "risk": curve}
     if tot_frames:
-        print(f"ВСЕГО: >=0.5 {tot_hi / tot_frames:.1%} кадров, {tot_alarms} алармов "
-              f"({tot_alarms / tot_dur * 60:.2f}/мин)")
+        print(f"TOTAL: >=0.5 {tot_hi / tot_frames:.1%} of frames, {tot_alarms} alarms "
+              f"({tot_alarms / tot_dur * 60:.2f}/min)")
     if args.gt:
         import evaluate
         gt = json.loads(Path(args.gt).read_text(encoding="utf-8"))

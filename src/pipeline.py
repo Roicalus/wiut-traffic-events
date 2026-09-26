@@ -1,15 +1,15 @@
-"""pipeline.py — Part A в две стадии:
+"""pipeline.py — Part A in two stages:
 
-  extract(video)  -> Observations   дорого: ОДИН проход декодирования 4K,
-                                    в нём YOLO+ByteTrack, светофор и
-                                    obstacle/fire-сканер (колбэки on_frame)
-  infer(obs)      -> events         дёшево: сшивка треков, правила,
-                                    постпроцессинг
+  extract(video)  -> Observations   expensive: ONE 4K decoding pass,
+                                    running YOLO+ByteTrack, the traffic light and
+                                    the obstacle/fire scanner (on_frame callbacks)
+  infer(obs)      -> events         cheap: track stitching, rules,
+                                    post-processing
 
-Разделение нужно для разработки: наблюдения кэшируются на диск
-(save_obs/load_obs), и подбор порогов правил против своей разметки идёт
-за секунды, а не по 8 минут YOLO на ролик (см. tools/dev_loop.py).
-В сабмишене solution.detect_events() просто вызывает обе стадии подряд.
+The split is for development: observations are cached to disk
+(save_obs/load_obs), and tuning rule thresholds against our own labels takes
+seconds instead of 8 minutes of YOLO per clip (see tools/dev_loop.py).
+In the submission solution.detect_events() simply calls both stages in sequence.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def get_zones() -> dict:
         if ZONES_PATH.exists():
             _zones_cache = load_zones(ZONES_PATH)
         else:
-            print(f"WARNING: {ZONES_PATH} не найден — классы на зонах не детектируются")
+            print(f"WARNING: {ZONES_PATH} not found — zone-based classes are not detected")
             _zones_cache = {}
     return _zones_cache
 
@@ -54,11 +54,11 @@ def get_model():
 
 
 def warm_up() -> None:
-    """Всё, что стоит одинаково для любого видео: загрузка весов, инициализация
-    CUDA и первый инференс (подбор ядер), признаки опорного кадра зон.
-    Вызывается при импорте solution.py — харнесс импортирует решение ДО
-    старта секундомера видео. Иначе эти ~10 с съедал бы бюджет первого
-    ролика: 3-секундный клип (бюджет 9 с) засчитывался пустым."""
+    """Everything that costs the same for any video: loading weights, CUDA
+    initialisation and the first inference (kernel selection), features of the zone reference frame.
+    Called on import of solution.py — the harness imports the solution BEFORE
+    the video stopwatch starts. Otherwise these ~10 s would eat the budget of the first
+    clip: a 3-second clip (9 s budget) was scored as empty."""
     import numpy as np
     from src.risk import RiskEstimator
     dummy = np.zeros((360, 640, 3), np.uint8)
@@ -79,7 +79,7 @@ class Observations:
     scanner: ObstacleFireScanner | None
     duration: float = 0.0
     extra: dict = field(default_factory=dict)
-    zones: dict | None = None      # зоны, совмещённые с ЭТИМ видео (см. src/align.py)
+    zones: dict | None = None      # zones aligned to THIS video (see src/align.py)
 
 
 OBSTACLE_FIRE_CLASSES = {"road_obstacle", "fire_smoke"}
@@ -87,19 +87,19 @@ OBSTACLE_FIRE_CLASSES = {"road_obstacle", "fire_smoke"}
 
 def extract(video_path: str, time_budget_sec: float | None = None, classes=None,
             tracker_kwargs: dict | None = None) -> Observations:
-    """classes — какие классы потом понадобятся (None — все, для dev-кэша):
-    сканер obstacle/fire (MOG2 + HSV на каждом кадре) создаётся, только если
-    нужны его классы. tracker_kwargs — переопределения track.run_tracker
-    (демо на CPU: imgsz/stride); в сабмите не задаются."""
+    """classes — which classes will be needed later (None — all, for the dev cache):
+    the obstacle/fire scanner (MOG2 + HSV on every frame) is created only if
+    its classes are needed. tracker_kwargs — overrides for track.run_tracker
+    (CPU demo: imgsz/stride); not set in the submission."""
     zones, align_report = align.aligned_zones(video_path, get_zones())
     name = Path(video_path).name
     if align_report.get("status") == "ok":
-        print(f"[{name}] зоны совмещены ({align_report['model']}, опорный кадр {align_report['ref']}): "
+        print(f"[{name}] zones aligned ({align_report['model']}, reference frame {align_report['ref']}): "
               f"dx={align_report['dx']} dy={align_report['dy']} px, rot={align_report['rot_deg']}°, "
               f"scale={align_report['scale']}, inliers={align_report['inliers']}"
-              + (f" — ВНИМАНИЕ: {align_report['warning']}" if align_report.get("warning") else ""))
+              + (f" — WARNING: {align_report['warning']}" if align_report.get("warning") else ""))
     else:
-        print(f"[{name}] WARNING: зоны НЕ совмещены ({align_report}) — используются как есть")
+        print(f"[{name}] WARNING: zones NOT aligned ({align_report}) — used as is")
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -129,9 +129,9 @@ def extract(video_path: str, time_budget_sec: float | None = None, classes=None,
 
 
 def to_reference_pixels(records: list, zones: dict, width: float) -> tuple[list, dict]:
-    """Правила и склейка треков работают в пикселях опорного кадра (4K):
-    пороги вроде stitch_tracks.MAX_DIST_PX заданы в них. Видео другого
-    разрешения (демо — 1920 px) приводится к этому масштабу; 4K — без изменений."""
+    """Rules and track stitching work in reference-frame pixels (4K):
+    thresholds such as stitch_tracks.MAX_DIST_PX are set in them. Video of a different
+    resolution (demo — 1920 px) is scaled to this; 4K is left unchanged."""
     refs = align.load_reference()
     ref_w = refs[0]["full_width"] if refs else width
     k = ref_w / width if width else 1.0
@@ -142,11 +142,11 @@ def to_reference_pixels(records: list, zones: dict, width: float) -> tuple[list,
 
 
 def reference_view(obs: Observations) -> tuple[list, dict]:
-    """Записи треков и зоны в пикселях опорного кадра, со сшитыми треками.
-    stitched_id копируется и в obs.records — визуализация подсвечивает боксы
-    по тем же id, что у правил (склейка в разных масштабах могла бы дать
-    разные id)."""
-    zones = getattr(obs, "zones", None) or get_zones()   # старый кэш — без совмещения
+    """Track records and zones in reference-frame pixels, with stitched tracks.
+    stitched_id is also copied into obs.records — the visualisation highlights boxes
+    by the same ids the rules use (stitching at different scales could give
+    different ids)."""
+    zones = getattr(obs, "zones", None) or get_zones()   # old cache — without alignment
     records, zones = to_reference_pixels(obs.records, zones, obs.meta.get("width") or 0)
     stitch_records(records)
     if records is not obs.records:
@@ -160,21 +160,21 @@ def infer(obs: Observations, classes=None, post_params=None) -> list[list]:
     events = []
     try:
         events += compute_events(records, zones, obs.light_samples, classes)
-    except Exception as exc:  # общая подготовка (annotate и т.п.) — у правил своя страховка
-        print(f"[{obs.meta.get('video')}] compute_events упал: {exc!r}")
+    except Exception as exc:  # shared preparation (annotate etc.) — the rules have their own safety net
+        print(f"[{obs.meta.get('video')}] compute_events failed: {exc!r}")
     if obs.scanner is not None and (classes is None or OBSTACLE_FIRE_CLASSES & set(classes)):
         try:
-            events += obs.scanner.finish(obs.records)   # сканер — в пикселях самого видео
+            events += obs.scanner.finish(obs.records)   # the scanner works in the video's own pixels
         except Exception as exc:
-            print(f"[{obs.meta.get('video')}] obstacle_fire упал: {exc!r}")
+            print(f"[{obs.meta.get('video')}] obstacle_fire failed: {exc!r}")
     return postprocess(events, duration=obs.duration or None, classes=classes, params=post_params)
 
 
-# ---------------------------------------------------------------- кэш (dev)
+# ---------------------------------------------------------------- cache (dev)
 def save_obs(obs: Observations, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if obs.scanner is not None:
-        obs.scanner._bg = None  # cv2 BackgroundSubtractor не сериализуется; finish() он не нужен
+        obs.scanner._bg = None  # cv2 BackgroundSubtractor is not picklable; finish() does not need it
     with gzip.open(path, "wb") as f:
         pickle.dump(obs, f, protocol=pickle.HIGHEST_PROTOCOL)
 

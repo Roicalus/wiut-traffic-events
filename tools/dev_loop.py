@@ -1,22 +1,22 @@
-"""dev_loop.py — быстрый цикл калибровки Part A на своей разметке.
+"""dev_loop.py — fast Part A calibration loop on our own labels.
 
-1-й запуск: гоняет дорогой проход (YOLO+трекер+светофор+сканер) по каждому
-видео и кэширует наблюдения в --cache. Дальше правила/постпроцессинг
-пересчитываются из кэша за секунды — правьте пороги в src/rules.py или
-src/postprocess.py и перезапускайте.
+1st run: runs the expensive pass (YOLO+tracker+traffic light+scanner) over each
+video and caches the observations in --cache. After that, rules/post-processing
+are recomputed from the cache in seconds — tweak thresholds in src/rules.py or
+src/postprocess.py and rerun.
 
     python tools/dev_loop.py --videos samples --gt my_labels.json
     python tools/dev_loop.py --videos samples --gt my_labels.json --ablate
-    python tools/dev_loop.py --videos samples                 # без разметки: счётчики
+    python tools/dev_loop.py --videos samples                 # without labels: counters
 
-Выводит:
-  * сколько сегментов каждого класса нашлось (все классы, даже выключенные) —
-    для "теста тишины": класс, которого в сэмплах нет, не должен срабатывать;
-  * официальный отчёт evaluate.py для текущего solution.CLASSES;
-  * --ablate: как меняется Score A, если добавить к CLASSES каждый из
-    экспериментальных классов по отдельности (решение, что включать).
+Prints:
+  * how many segments of each class were found (all classes, even disabled ones) —
+    for the "silence test": a class absent from the samples must not fire;
+  * the official evaluate.py report for the current solution.CLASSES;
+  * --ablate: how Score A changes when each experimental class is added to CLASSES
+    on its own (to decide what to enable).
 
-После изменения src/track.py (детектор/трекер/stride) — удалите кэш (--refresh).
+After changing src/track.py (detector/tracker/stride), delete the cache (--refresh).
 """
 from __future__ import annotations
 
@@ -43,14 +43,14 @@ def score(gt, videos_events, classes):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--videos", required=True, help="папка с .mp4 или один файл")
+    ap.add_argument("--videos", required=True, help="folder with .mp4 files or a single file")
     ap.add_argument("--gt", default=None, help="my_labels.json (tools/build_ground_truth.py)")
     ap.add_argument("--cache", default=str(ROOT / "cache"))
-    ap.add_argument("--refresh", action="store_true", help="пересчитать кэш наблюдений")
+    ap.add_argument("--refresh", action="store_true", help="recompute the observation cache")
     ap.add_argument("--ablate", action="store_true")
-    ap.add_argument("--out", default=None, help="записать predictions (текущие CLASSES) сюда")
+    ap.add_argument("--out", default=None, help="write predictions (current CLASSES) here")
     ap.add_argument("--list", default=None,
-                    help="через запятую: классы, чьи события напечатать с временем (или all)")
+                    help="comma-separated: classes whose events to print with times (or all)")
     args = ap.parse_args()
 
     src = Path(args.videos)
@@ -66,7 +66,7 @@ def main():
             t0 = time.perf_counter()
             obs = extract(str(path))
             el = time.perf_counter() - t0
-            print(f"[{path.name}] extract {el:.0f}s = {el / max(obs.duration, 1e-6):.2f}x длительности "
+            print(f"[{path.name}] extract {el:.0f}s = {el / max(obs.duration, 1e-6):.2f}x duration "
                   f"(stride_changes={obs.meta.get('stride_changes')})")
             save_obs(obs, cpath)
         t0 = time.perf_counter()
@@ -97,7 +97,7 @@ def main():
 
     if args.ablate:
         base = rep["part_a"]["score_a"]
-        print(f"\n==== ablation (база Score A = {base:.4f})")
+        print(f"\n==== ablation (base Score A = {base:.4f})")
         for c in solution.EXPERIMENTAL_CLASSES:
             if c in solution.CLASSES:
                 continue

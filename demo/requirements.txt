@@ -1,6 +1,6 @@
-# Живое демо (demo/app.py) — локально или на Hugging Face Spaces (ZeroGPU). Сабмиту не
-# нужно: организаторы ставят только ../requirements.txt. На ZeroGPU пакет spaces и gradio
-# уже установлены; torch — обычная CUDA-сборка (на CPU она тоже работает).
+# Live demo (demo/app.py) — locally or on Hugging Face Spaces (ZeroGPU). Not needed for the
+# submission: the organizers install only ../requirements.txt. On ZeroGPU the spaces and gradio
+# packages are already installed; torch is the regular CUDA build (it also works on CPU).
 torch==2.8.0
 torchvision==0.23.0
 ultralytics==8.4.160

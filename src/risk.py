@@ -1,41 +1,41 @@
-"""risk.py — Part B: каузальная оценка P(accident начнётся в ближайшие 5 с).
+"""risk.py — Part B: causal estimate of P(an accident starts within the next 5 s).
 
-Эвристика без обучения:
-  1. YOLO11n + ByteTrack на каждом stride-м кадре (свой проход, каузальный —
-     треки Part A сюда не попадают, они считались по всему видео);
-  2. точка трека — низ-центр бокса (контакт с землёй: для машины и
-     пешехода это одна плоскость, центр бокса высокой машины "висит"
-     над соседней полосой); скорость — по смещению за 0.5 с, и ещё одна
-     за предыдущие 0.5 с (видно, тормозит ли пара);
-  3. для пар (хотя бы один участник — ТС) в единицах "диагональ бокса":
-     точка наибольшего сближения при постоянной скорости (t*, d_min) и
-     ТРЕБУЕМОЕ ЗАМЕДЛЕНИЕ a_req = v_c^2 / (2 * зазор), v_c — скорость
-     сближения. Риск — только если пара идёт в контакт (d_min мал), скоро
-     (t* мал) И остановиться уже трудно (a_req велико). Именно a_req
-     отличает аварию от нормы: на сэмплах 80% ложных алармов старой версии
-     — машина подъезжает к стоящей очереди, при постоянной скорости она
-     "врежется" через 1 с, но скорость сближения мала и водитель тормозит;
-  4. пара уже тормозит (скорость сближения упала) — риск снижается;
-  5. мягкие сигналы ниже порога аларма (0.5), они только ранжируют кадры
-     для AP: курс на столкновение без учёта a_req (SOFT_CAP) — появляется
-     раньше, чем "остановиться уже трудно", и резкое торможение (BRAKE_CAP):
-     само по себе торможение перед очередью на красный не даёт аларм,
-     но поднимает ранжирование (AP);
-  6. медиана последних MEDIAN_K сырых значений — гасит всплески короче ~0.3 с
-     (перескоки ID и дрожание боксов в плотном потоке).
+Training-free heuristic:
+  1. YOLO11n + ByteTrack on every stride-th frame (its own causal pass —
+     Part A tracks are not used here, they were computed over the whole video);
+  2. the track point is the bottom-centre of the box (ground contact: for a car and
+     a pedestrian this is the same plane, while the box centre of a tall vehicle "hangs"
+     over the neighbouring lane); velocity is the displacement over 0.5 s, plus one more
+     over the preceding 0.5 s (shows whether the pair is braking);
+  3. for pairs (at least one participant is a vehicle), in units of "box diagonal":
+     the closest point of approach at constant velocity (t*, d_min) and the
+     REQUIRED DECELERATION a_req = v_c^2 / (2 * gap), v_c being the closing
+     speed. Risk only if the pair is heading for contact (small d_min), soon
+     (small t*) AND stopping is already hard (large a_req). It is a_req that
+     separates an accident from normal traffic: on the samples 80% of the old version's
+     false alarms were a car approaching a stationary queue — at constant velocity it would
+     "crash" in 1 s, but the closing speed is low and the driver brakes;
+  4. the pair is already braking (closing speed dropped) — risk is reduced;
+  5. soft signals below the alarm threshold (0.5) only rank frames
+     for AP: collision course ignoring a_req (SOFT_CAP) — appears
+     earlier than "stopping is already hard", and hard braking (BRAKE_CAP):
+     braking alone before a queue at a red light does not raise an alarm,
+     but lifts the ranking (AP);
+  6. median of the last MEDIAN_K raw values — suppresses spikes shorter than ~0.3 s
+     (ID switches and box jitter in dense traffic).
 
-Пороги подобраны на сэмплах (tools/risk_replay.py): на обычном трафике
-риск >= 0.5 — доли процента кадров, а синтетические сценарии столкновения
-(tests/test_risk.py) дают аларм за 1-3 с до контакта.
+Thresholds were tuned on the samples (tools/risk_replay.py): on normal traffic
+risk >= 0.5 occurs in a fraction of a percent of frames, while synthetic collision scenarios
+(tests/test_risk.py) raise the alarm 1-3 s before contact.
 
-Устройство: RiskEstimator = детектор (YOLO + ByteTrack, _detect) + бюджет
-времени + RiskScorer (шаги 2-6, чистый numpy). RiskScorer не знает про
-модель, поэтому tools/risk_replay.py кэширует детекции один раз и
-перебирает пороги скоринга за секунды — с тем же кодом, что в сабмите.
+Structure: RiskEstimator = detector (YOLO + ByteTrack, _detect) + time
+budget + RiskScorer (steps 2-6, pure numpy). RiskScorer knows nothing about the
+model, so tools/risk_replay.py caches detections once and
+sweeps scoring thresholds in seconds — with the same code as in the submission.
 
-Бюджет времени: step() знает дедлайн видео (src/budget.py) и, если не
-успевает, увеличивает stride; в самом крайнем случае перестаёт вызывать
-детектор совсем. Превышение бюджета обнулило бы и Part A этого видео.
+Time budget: step() knows the video deadline (src/budget.py) and, if it is
+falling behind, increases the stride; in the most extreme case it stops calling
+the detector altogether. Exceeding the budget would also zero out Part A for this video.
 """
 from __future__ import annotations
 
@@ -52,34 +52,34 @@ RISK_MODEL = str(Path(__file__).resolve().parent.parent / "weights" / "yolo11n.p
 RISK_TRACKER = "bytetrack.yaml"
 RISK_IMGSZ = 640
 RISK_CONF = 0.35
-CROP_TOP_FRAC = track.CROP_TOP_FRAC   # как в Part A: только полоса над зонами сцены
+CROP_TOP_FRAC = track.CROP_TOP_FRAC   # as in Part A: only the strip above the scene zones
 BASE_STRIDE = 2
-MAX_STRIDE = 25            # реже раза в секунду смысла нет
-REPLAN_WARMUP_FRAMES = 150  # разгон CUDA и первые декоды не в счёт
-REPLAN_MIN_FRAMES = 300     # темп меряем хотя бы по 10 с видео
-HISTORY = 30               # точек на трек: >= 1 с при BASE_STRIDE
+MAX_STRIDE = 25            # less often than once per second makes no sense
+REPLAN_WARMUP_FRAMES = 150  # CUDA warm-up and the first decodes do not count
+REPLAN_MIN_FRAMES = 300     # measure the pace over at least 10 s of video
+HISTORY = 30               # points per track: >= 1 s at BASE_STRIDE
 STALE_SEC = 1.0
 VEL_BASELINE_SEC = 0.5
 
-# Все расстояния — в диагоналях бокса пары (перспектива), скорости — диаг/с.
-# Для масштаба: машина в движении на сэмплах — медиана 0.7, 90% — 1.7 диаг/с.
-HORIZON = 5.0              # дальше t* пару не рассматриваем
-TTC_DANGER = 1.0           # t* <= этого -> временной множитель 1
-TTC_SAFE = 3.5             # t* >= этого -> 0
-D_COLL = 0.3               # d_min ниже — контакт (соседние полосы в перспективе — 0.5-0.8)
-MAX_PAIR_DIST = 6.0        # дальше — пару не рассматриваем
-VC_MIN = 0.8               # скорость сближения ниже — не опасно
-GAP0 = 0.3                 # расстояние "точек на земле" в момент контакта
-A_LOW, A_HIGH = 1.0, 3.0   # требуемое замедление, диаг/с^2: множитель 0 -> 1
-BRAKING_RATIO = 0.75       # сближение упало ниже этой доли за 0.5 с = тормозят
+# All distances are in box diagonals of the pair (perspective), speeds in diag/s.
+# For scale: a moving car on the samples — median 0.7, 90th percentile 1.7 diag/s.
+HORIZON = 5.0              # pairs with t* beyond this are ignored
+TTC_DANGER = 1.0           # t* <= this -> time factor 1
+TTC_SAFE = 3.5             # t* >= this -> 0
+D_COLL = 0.3               # d_min below this is contact (adjacent lanes in perspective are 0.5-0.8)
+MAX_PAIR_DIST = 6.0        # pairs farther apart are ignored
+VC_MIN = 0.8               # closing speed below this is not dangerous
+GAP0 = 0.3                 # distance between the "ground points" at the moment of contact
+A_LOW, A_HIGH = 1.0, 3.0   # required deceleration, diag/s^2: factor 0 -> 1
+BRAKING_RATIO = 0.75       # closing speed fell below this fraction within 0.5 s = braking
 BRAKING_FACTOR = 0.5
-SOFT_CAP = 0.3             # "курс на столкновение" без учёта a_req: ниже порога аларма,
-                           # но поднимает кадры за 1-5 с до контакта в ранжировании (AP)
+SOFT_CAP = 0.3             # "collision course" ignoring a_req: below the alarm threshold,
+                           # but lifts frames 1-5 s before contact in the ranking (AP)
 MOVING_SPEED = 0.3
-BORDER_PX = 8              # бокс у края кадра обрезан: его "точка на земле" скачет
+BORDER_PX = 8              # a box at the frame edge is clipped: its "ground point" jumps
 BRAKE_LOW, BRAKE_HIGH = 0.4, 0.7
-BRAKE_CAP = 0.35           # торможение само по себе не поднимает риск до аларма
-MEDIAN_K = 9                # медиана 0.6 с при 15 Гц: на сэмплах 28 -> 4 ложных алармов, аларм позже на ~0.2 с
+BRAKE_CAP = 0.35           # braking alone does not raise the risk to alarm level
+MEDIAN_K = 9                # 0.6 s median at 15 Hz: on the samples 28 -> 4 false alarms, alarm ~0.2 s later
 
 VEHICLE_CLS = {1, 2, 3, 5, 7}
 PERSON_CLS = 0
@@ -90,17 +90,17 @@ def _clip01(x):
 
 
 class RiskScorer:
-    """Риск по потоку детекций. feed(dets, t_sec) -> score; dets — массив
-    (N, 6): x1, y1, x2, y2, track_id, cls. Только прошлое: состояние —
-    истории треков и последние сырые значения. frame_wh — размер кадра, в
-    котором заданы боксы (для отсева обрезанных краем кадра)."""
+    """Risk from a stream of detections. feed(dets, t_sec) -> score; dets is an array
+    (N, 6): x1, y1, x2, y2, track_id, cls. Past only: the state is
+    the track histories and the last raw values. frame_wh is the size of the frame
+    in which the boxes are given (to drop boxes clipped by the frame edge)."""
 
     def __init__(self, frame_wh: tuple[float, float] | None = None):
         self.frame_wh = frame_wh
         self.tracks: dict[int, deque] = {}
         self.raw_hist: deque = deque(maxlen=MEDIAN_K)
         self.score = 0.0
-        self.explain: dict | None = None   # пара с наибольшим риском на последнем шаге
+        self.explain: dict | None = None   # highest-risk pair at the last step
 
     def feed(self, dets: np.ndarray, t_sec: float) -> float:
         self._update_tracks(dets, t_sec)
@@ -118,9 +118,9 @@ class RiskScorer:
         for x1, y1, x2, y2, tid, cls in dets:
             diag = max(float(np.hypot(x2 - x1, y2 - y1)), 1.0)
             d = self.tracks.setdefault(int(tid), deque(maxlen=HISTORY))
-            # ByteTrack не различает классы: номер пешехода может перейти к машине,
-            # накрывшей его рамку. Скорость "от человека до машины" — ложный скачок,
-            # поэтому при смене семейства история трека начинается заново.
+            # ByteTrack does not distinguish classes: a pedestrian's ID can pass to a car
+            # that covered their box. A "pedestrian to car" velocity is a false jump,
+            # so when the class family changes the track history starts over.
             if d and (int(d[-1][4]) in VEHICLE_CLS) != (int(cls) in VEHICLE_CLS):
                 d.clear()
             d.append((t_sec, (x1 + x2) / 2.0, float(y2), diag, int(cls)))
@@ -129,15 +129,15 @@ class RiskScorer:
 
     @staticmethod
     def _back(d, t, lag):
-        """Последняя точка трека не позже t - lag."""
+        """Last track point no later than t - lag."""
         for pt in reversed(d):
             if t - pt[0] >= lag:
                 return pt
         return None
 
     def _state(self, d, t_sec):
-        """(pos, vel, vel_prev|None, diag, cls) в px и px/с, или None, если
-        трек не свежий или короче VEL_BASELINE_SEC."""
+        """(pos, vel, vel_prev|None, diag, cls) in px and px/s, or None if
+        the track is not fresh or is shorter than VEL_BASELINE_SEC."""
         t, x, y, diag, cls = d[-1]
         if t_sec - t > 1e-6:
             return None
@@ -174,7 +174,7 @@ class RiskScorer:
         p = (pos[i] - pos[j]) / d_norm
         v = (vel[i] - vel[j]) / d_norm
         dist = np.linalg.norm(p, axis=1)
-        v_c = -(p * v).sum(axis=1) / np.maximum(dist, 1e-6)        # > 0: сближаются
+        v_c = -(p * v).sum(axis=1) / np.maximum(dist, 1e-6)        # > 0: closing in
         ok = (dist < MAX_PAIR_DIST) & (v_c >= VC_MIN)
         if not ok.any():
             return 0.0
@@ -192,7 +192,7 @@ class RiskScorer:
         r_time = np.clip((TTC_SAFE - t_star) / (TTC_SAFE - TTC_DANGER), 0.0, 1.0)
         r_acc = np.clip((a_req - A_LOW) / (A_HIGH - A_LOW), 0.0, 1.0)
         r_geom = 1.0 - 0.5 * d_min / D_COLL
-        # сближение полсекунды назад: если сейчас заметно медленнее — пара тормозит
+        # closing speed half a second ago: if it is noticeably slower now, the pair is braking
         vp = (vel_prev[i] - vel_prev[j]) / ((diag[i] + diag[j]) / 2.0)[:, None]
         v_c_prev = -(p * vp).sum(axis=1) / np.maximum(dist, 1e-6)
         braking = has_prev[i] & has_prev[j] & (v_c < BRAKING_RATIO * v_c_prev)
@@ -230,16 +230,16 @@ class RiskScorer:
 
 
 class RiskEstimator:
-    """Детектор на каждом stride-м кадре + RiskScorer.
+    """Detector on every stride-th frame + RiskScorer.
 
-    Детекция идёт в фоновом потоке, пока харнесс декодирует следующие кадры
-    (декодирование 4K — главный расход времени, и оно не ждёт GPU). Детекция
-    кадра k запускается в step(k), а её результат забирается строго в
-    следующем step() с инференсом — поэтому результат не зависит от скорости
-    потоков (детерминизм), а скор в момент t считается только по кадрам до t
-    (причинность). Цена — задержка на один шаг: stride кадров, ~0.07 с.
+    Detection runs in a background thread while the harness decodes the next frames
+    (4K decoding is the main time cost, and it does not wait for the GPU). Detection
+    of frame k is launched in step(k), and its result is collected strictly in the
+    next step() that runs inference — so the result does not depend on thread
+    speed (determinism), and the score at time t uses only frames before t
+    (causality). The price is a one-step delay: stride frames, ~0.07 s.
     """
-    _model = None  # веса грузим один раз на процесс
+    _model = None  # weights are loaded once per process
     _pool = None
 
     @classmethod
@@ -258,7 +258,7 @@ class RiskEstimator:
         duration = self.n_frames / self.fps if self.fps else 0.0
         self.deadline = budget.deadline_for(meta.get("video_id", ""), duration)
         self.model = self._get_model()
-        self._drain()                      # хвост предыдущего видео, если был
+        self._drain()                      # tail of the previous video, if any
         self.device = track._pick_device()
         self.half = self.device != "cpu"
         width, height = int(meta.get("width") or 0), int(meta.get("height") or 0)
@@ -269,11 +269,11 @@ class RiskEstimator:
         self.stride = BASE_STRIDE
         self.disabled = False
         self.first_call = True
-        self._pending = None               # (future, t_sec) детекции в работе
+        self._pending = None               # (future, t_sec) of the detection in flight
         self.n_failed = 0
-        self.explain_log = None            # демо: список (t, score, пара риска) для отрисовки
-        self._base = None                  # (wall, idx): с какого места меряем темп
-        self._over = 0                     # сколько проверок подряд прогноз за дедлайном
+        self.explain_log = None            # demo: list of (t, score, risk pair) for rendering
+        self._base = None                  # (wall, idx): where pace measurement starts
+        self._over = 0                     # consecutive checks with the projection past the deadline
 
     def step(self, frame: np.ndarray, t_sec: float) -> float:
         self.idx += 1
@@ -285,22 +285,22 @@ class RiskEstimator:
         self._pending = (self._pool.submit(self._detect, frame), t_sec)
         return self.last_score
 
-    # ------------------------------------------------------------ детекция
+    # ------------------------------------------------------------ detection
     def _collect(self) -> None:
-        """Забирает детекцию, запущенную в прошлом шаге, и обновляет скор."""
+        """Collects the detection launched at the previous step and updates the score."""
         if self._pending is None:
             return
         fut, t_det = self._pending
         self._pending = None
         try:
             dets = fut.result()
-        except Exception as exc:  # один плохой кадр не должен ронять весь прогон
+        except Exception as exc:  # one bad frame must not bring down the whole run
             self.n_failed += 1
             if self.n_failed == 1:
-                print(f"[risk] детектор упал на t={t_det:.1f}s: {exc!r} (дальше — без повторов в логе)")
+                print(f"[risk] detector failed at t={t_det:.1f}s: {exc!r} (further failures are not logged)")
             return
         self.last_score = self.scorer.feed(dets, t_det)
-        if self.explain_log is not None:   # только визуализация (демо); на скор не влияет
+        if self.explain_log is not None:   # visualisation only (demo); does not affect the score
             self.explain_log.append((t_det, self.last_score, self.scorer.explain))
 
     def _drain(self) -> None:
@@ -313,7 +313,7 @@ class RiskEstimator:
         self._pending = None
 
     def _detect(self, frame) -> np.ndarray:
-        """(N, 6) float32: x1, y1, x2, y2, track_id, cls в координатах обрезанного кадра."""
+        """(N, 6) float32: x1, y1, x2, y2, track_id, cls in cropped-frame coordinates."""
         y0 = int(frame.shape[0] * CROP_TOP_FRAC)
         r = self.model.track(frame[y0:], persist=not self.first_call, tracker=RISK_TRACKER,
                              classes=track.CLASSES_OF_INTEREST, imgsz=RISK_IMGSZ,
@@ -325,27 +325,27 @@ class RiskEstimator:
         return np.column_stack([r.boxes.xyxy.cpu().numpy(), r.boxes.id.cpu().numpy(),
                                 r.boxes.cls.cpu().numpy()]).astype(np.float32)
 
-    # ------------------------------------------------------------ бюджет
+    # ------------------------------------------------------------ budget
     def _replan(self, now: float) -> None:
-        """Прогноз конца видео по СРЕДНЕМУ темпу (декод харнесса + наш инференс)
-        с момента после разгона. Не успеваем — реже детектор; дедлайн прошёл —
-        детектор выключен и скор 0 (старый скор стал бы одним длинным алармом).
+        """Projects the end of the video from the AVERAGE pace (harness decode + our inference)
+        since the end of warm-up. Falling behind — detector runs less often; deadline passed —
+        detector is switched off and the score is 0 (the stale score would become one long alarm).
 
-        Темп по последним 50 кадрам был слишком нервным: одна медленная секунда
-        декодирования давала прогноз "+19 s к дедлайну" там, где видео кончилось
-        с запасом 300 с (C3902), stride рос, и кривая риска зависела от того,
-        что ещё грузило машину. Теперь: среднее с начала, и две проверки подряд
-        за дедлайном — только тогда stride += 1 (и темп меряется заново)."""
+        Pace over the last 50 frames was too jumpy: one slow second of
+        decoding gave a projection of "+19 s past the deadline" where the video actually finished
+        with 300 s to spare (C3902), stride grew, and the risk curve depended on
+        whatever else was loading the machine. Now: the average since the start, and only two
+        consecutive checks past the deadline trigger stride += 1 (and the pace is measured anew)."""
         if self.deadline == float("inf") or self.n_frames <= 0:
             return
         if now > self.deadline:
             if not self.disabled:
-                print(f"[risk] бюджет исчерпан на t={self.idx / self.fps:.0f}s — детектор выключен")
+                print(f"[risk] budget exhausted at t={self.idx / self.fps:.0f}s — detector switched off")
             self.disabled = True
             self._drain()
             self.last_score = 0.0
             return
-        if self.idx < REPLAN_WARMUP_FRAMES:        # первые кадры — разгон CUDA
+        if self.idx < REPLAN_WARMUP_FRAMES:        # first frames — CUDA warm-up
             return
         if self._base is None:
             self._base = (now, self.idx)
@@ -359,4 +359,4 @@ class RiskEstimator:
         if self._over >= 2 and self.stride < MAX_STRIDE:
             self.stride += 1
             self._base, self._over = (now, self.idx), 0
-            print(f"[risk] прогноз {projected - self.deadline:+.0f}s к дедлайну -> stride={self.stride}")
+            print(f"[risk] projection {projected - self.deadline:+.0f}s past the deadline -> stride={self.stride}")

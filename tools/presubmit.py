@@ -1,10 +1,10 @@
-"""presubmit.py — проверка репозитория по требованиям сабмишена.
+"""presubmit.py — checks the repository against the submission requirements.
 
-    python tools/presubmit.py                         # статические проверки
-    python tools/presubmit.py --determinism samples/C3905.MP4   # + два прогона подряд
+    python tools/presubmit.py                         # static checks
+    python tools/presubmit.py --determinism samples/C3905.MP4   # + two runs in a row
 
-Каждый пункт: OK / WARN / FAIL. Код возврата 1, если есть FAIL.
-Запускайте перед финальным коммитом и перед тегом.
+Each item: OK / WARN / FAIL. Exit code 1 if there is any FAIL.
+Run before the final commit and before tagging.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# sha256 файлов стартового набора организаторов: они должны лежать без изменений
+# sha256 of the organisers' starter-kit files: they must stay unmodified
 STARTER_KIT = {
     "run_submission.py": "a47b494afae14432a65166b43cd5f2a278408ce661aecf0fb86b6fa05a06c204",
     "evaluate.py": "111c6fa04709c9f1df4ea3db4bede749953b2c27bdc5679c2ef56794637573b5",
@@ -29,7 +29,7 @@ WEIGHTS = {
     "yolo11n.pt": "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1",
 }
 MAX_WEIGHTS_BYTES = 5 * 1024 ** 3
-TIME_MARGIN = 0.7   # хотим total_sec <= 70% бюджета — запас на более медленную машину
+TIME_MARGIN = 0.7   # we want total_sec <= 70% of the budget — headroom for a slower machine
 
 results: list[tuple[str, str, str]] = []
 
@@ -56,61 +56,61 @@ def git(*args) -> str | None:
 
 
 def check_layout():
-    print("\n[1] Структура репозитория")
+    print("\n[1] Repository layout")
     for f in ("solution.py", "run_submission.py", "evaluate.py", "requirements.txt", "README.md",
               "predictions_samples.json", "zones.json"):
-        report("OK" if (ROOT / f).exists() else "FAIL", f, "" if (ROOT / f).exists() else "нет файла")
+        report("OK" if (ROOT / f).exists() else "FAIL", f, "" if (ROOT / f).exists() else "file missing")
     report("OK" if (ROOT / "src").is_dir() else "FAIL", "src/")
     report("OK" if (ROOT / "weights").is_dir() else "FAIL", "weights/")
     for name, want in STARTER_KIT.items():
         p = ROOT / name
         if p.exists():
             same = sha256(p) == want
-            report("OK" if same else "FAIL", f"{name} без изменений",
-                   "" if same else "файл отличается от стартового набора — верните оригинал")
+            report("OK" if same else "FAIL", f"{name} unmodified",
+                   "" if same else "file differs from the starter kit — restore the original")
 
 
 def check_requirements():
-    print("\n[2] Зависимости (pip install -r requirements.txt на чистой машине)")
+    print("\n[2] Dependencies (pip install -r requirements.txt on a clean machine)")
     lines = [l.split("#")[0].strip() for l in (ROOT / "requirements.txt").read_text().splitlines()]
     reqs = {re.split(r"[<>=!~ ;\[]", l, 1)[0].lower(): l for l in lines if l}
     for pkg in ("torch", "torchvision", "ultralytics"):
         spec = reqs.get(pkg, "")
-        report("OK" if "==" in spec else "FAIL", f"{pkg} закреплён точно", spec or "не указан")
-    report("OK" if "lap" in reqs else "FAIL", "lap в requirements", "нужен ByteTrack офлайн")
+        report("OK" if "==" in spec else "FAIL", f"{pkg} pinned exactly", spec or "not listed")
+    report("OK" if "lap" in reqs else "FAIL", "lap in requirements", "required by ByteTrack offline")
     has_headless = "opencv-python-headless" in reqs
-    report("FAIL" if has_headless else "OK", "нет opencv-python-headless",
-           "конфликтует с opencv-python из ultralytics" if has_headless else "")
+    report("FAIL" if has_headless else "OK", "no opencv-python-headless",
+           "conflicts with opencv-python from ultralytics" if has_headless else "")
     try:
         import torch
         tv = torch.__version__.split("+")[0]
         want = reqs.get("torch", "").split("==")[-1]
-        report("OK" if tv == want else "WARN", "локальный torch совпадает с requirements",
-               f"локально {torch.__version__}, в requirements {want}")
+        report("OK" if tv == want else "WARN", "local torch matches requirements",
+               f"local {torch.__version__}, requirements {want}")
     except ImportError:
-        report("WARN", "torch не установлен локально")
+        report("WARN", "torch is not installed locally")
 
 
 def check_weights():
-    print("\n[3] Веса (<= 5 ГБ, офлайн)")
+    print("\n[3] Weights (<= 5 GB, offline)")
     total = 0
     for name, want in WEIGHTS.items():
         p = ROOT / "weights" / name
         if not p.exists():
             report("WARN" if (ROOT / "weights" / "download.sh").exists() else "FAIL", f"weights/{name}",
-                   "нет в репозитории — организаторам придётся запускать download.sh; надёжнее закоммитить")
+                   "not in the repository — the organisers would have to run download.sh; committing is safer")
             continue
         total += p.stat().st_size
         report("OK" if sha256(p) == want else "FAIL", f"weights/{name} sha256")
-    report("OK" if total <= MAX_WEIGHTS_BYTES else "FAIL", f"размер весов {total / 1e6:.0f} МБ")
+    report("OK" if total <= MAX_WEIGHTS_BYTES else "FAIL", f"weights size {total / 1e6:.0f} MB")
     for f in ("zones_ref.jpg", "zones_ref.json"):
         ok = (ROOT / f).exists()
         report("OK" if ok else "FAIL", f, "" if ok else
-               "нет опорного кадра — зоны не совмещаются с видео (tools/make_zone_ref.py)")
+               "no reference frame — zones cannot be aligned to the video (tools/make_zone_ref.py)")
 
 
 def check_solution():
-    print("\n[4] Интерфейс solution.py")
+    print("\n[4] solution.py interface")
     try:
         import solution
         from evaluate import OFFICIAL_CLASSES
@@ -118,8 +118,8 @@ def check_solution():
         report("FAIL", "import solution", repr(exc))
         return
     extra = [c for c in solution.CLASSES if c not in OFFICIAL_CLASSES]
-    report("OK" if not extra else "FAIL", "CLASSES ⊆ официальных", f"лишние: {extra}" if extra else
-           f"{len(solution.CLASSES)} классов: {solution.CLASSES}")
+    report("OK" if not extra else "FAIL", "CLASSES ⊆ official", f"extra: {extra}" if extra else
+           f"{len(solution.CLASSES)} classes: {solution.CLASSES}")
     for name in ("detect_events", "RiskEstimator"):
         report("OK" if hasattr(solution, name) else "FAIL", f"solution.{name}")
     rs = solution.RiskEstimator
@@ -130,78 +130,78 @@ def check_predictions():
     print("\n[5] predictions_samples.json")
     p = ROOT / "predictions_samples.json"
     if not p.exists():
-        report("FAIL", "файл", "python run_submission.py --videos samples --out predictions_samples.json --team <команда>")
+        report("FAIL", "file", "python run_submission.py --videos samples --out predictions_samples.json --team <team>")
         return
     pred = json.loads(p.read_text())
     import evaluate
     errors, warnings = evaluate.validate(pred)
     report("OK" if not errors else "FAIL", "evaluate.py --validate-only",
-           f"{len(errors)} ошибок: {errors[:3]}" if errors else f"{len(warnings)} предупреждений")
+           f"{len(errors)} errors: {errors[:3]}" if errors else f"{len(warnings)} warnings")
     team = pred.get("team", "")
-    report("OK" if team and team != "unnamed-team" else "FAIL", "имя команды", team or "пусто")
+    report("OK" if team and team != "unnamed-team" else "FAIL", "team name", team or "empty")
     samples = ROOT / "samples"
     if samples.is_dir():
         vids = {v.name for v in samples.iterdir() if v.suffix.lower() == ".mp4"}
         missing = sorted(vids - set(pred.get("videos", {})))
-        report("OK" if not missing else "FAIL", "все сэмплы в файле", f"нет: {missing}" if missing else
-               f"{len(vids)} видео")
+        report("OK" if not missing else "FAIL", "all samples in the file", f"missing: {missing}" if missing else
+               f"{len(vids)} videos")
     for vid, log in pred.get("log", {}).items():
         errs = log.get("errors", [])
-        report("OK" if not errs else "FAIL", f"{vid}: лог харнесса", "; ".join(e.splitlines()[0] for e in errs[:2]))
+        report("OK" if not errs else "FAIL", f"{vid}: harness log", "; ".join(e.splitlines()[0] for e in errs[:2]))
         total, budget = log.get("total_sec"), log.get("budget_sec")
         if total and budget:
             frac = total / budget
-            report("OK" if frac <= TIME_MARGIN else "WARN", f"{vid}: время",
-                   f"{total:.0f}s из {budget:.0f}s ({frac:.0%} бюджета, цель <= {TIME_MARGIN:.0%})")
+            report("OK" if frac <= TIME_MARGIN else "WARN", f"{vid}: time",
+                   f"{total:.0f}s of {budget:.0f}s ({frac:.0%} of budget, target <= {TIME_MARGIN:.0%})")
         if "part_b_sec" not in log:
-            report("FAIL", f"{vid}: Part B", "risk не считался — прогон был с --no-risk?")
+            report("FAIL", f"{vid}: Part B", "risk was not computed — was the run done with --no-risk?")
     for vid, entry in pred.get("videos", {}).items():
         if not entry.get("risk"):
-            report("WARN", f"{vid}: пустая risk-кривая")
+            report("WARN", f"{vid}: empty risk curve")
     if (ROOT / "zones_ref.json").exists() and git("rev-parse", "HEAD"):
         newer = git("log", "-1", "--format=%ct", "--", "src", "solution.py", "zones.json", "zones_ref.json")
         pred_t = git("log", "-1", "--format=%ct", "--", "predictions_samples.json")
         if newer and pred_t and int(newer) > int(pred_t):
-            report("WARN", "predictions_samples.json старее кода",
-                   "код/зоны менялись после последней генерации — перегенерируйте")
+            report("WARN", "predictions_samples.json is older than the code",
+                   "code/zones changed after the last generation — regenerate")
 
 
 def check_readme():
     print("\n[6] README")
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    for key, pat in {"установка и запуск": r"pip install -r requirements\.txt",
-                     "как получить веса": r"download\.sh",
-                     "подход": r"(?i)approach",
-                     "датасеты и лицензии": r"(?i)licen[cs]e",
-                     "сиды/недетерминизм": r"(?i)determinis|seed",
-                     "команда": r"(?i)team"}.items():
+    for key, pat in {"install and run": r"pip install -r requirements\.txt",
+                     "how to get the weights": r"download\.sh",
+                     "approach": r"(?i)approach",
+                     "datasets and licences": r"(?i)licen[cs]e",
+                     "seeds/non-determinism": r"(?i)determinis|seed",
+                     "team": r"(?i)team"}.items():
         report("OK" if re.search(pat, text) else "FAIL", f"README: {key}")
     placeholders = re.findall(r"<team name>|<[^>]*команд[^>]*>|\| … \|", text)
-    report("OK" if not placeholders else "FAIL", "README без заглушек",
-           f"заполните: {sorted(set(placeholders))}" if placeholders else "")
+    report("OK" if not placeholders else "FAIL", "README without placeholders",
+           f"fill in: {sorted(set(placeholders))}" if placeholders else "")
 
 
 def check_git():
     print("\n[7] Git")
     if git("rev-parse", "--is-inside-work-tree") != "true":
-        report("WARN", "это не git-репозиторий (git init && git add . && git commit)")
+        report("WARN", "not a git repository (git init && git add . && git commit)")
         return
     dirty = git("status", "--porcelain")
-    report("OK" if not dirty else "WARN", "всё закоммичено", f"{len(dirty.splitlines())} изменённых файлов" if dirty else "")
+    report("OK" if not dirty else "WARN", "everything committed", f"{len(dirty.splitlines())} modified files" if dirty else "")
     tracked = (git("ls-files") or "").splitlines()
     for f in ("zones_ref.jpg", "zones.json", "weights/yolo11s.pt", "weights/yolo11n.pt", "predictions_samples.json"):
         if (ROOT / f).exists():
-            report("OK" if f in tracked else "WARN", f"{f} в git", "" if f in tracked else "файл есть, но не добавлен")
+            report("OK" if f in tracked else "WARN", f"{f} in git", "" if f in tracked else "file exists but is not added")
     videos = [f for f in tracked if f.lower().endswith(".mp4")]
-    report("OK" if not videos else "WARN", "видео не закоммичены", f"{videos[:3]}" if videos else "")
+    report("OK" if not videos else "WARN", "no videos committed", f"{videos[:3]}" if videos else "")
     tag = git("describe", "--tags", "--exact-match")
-    report("OK" if tag else "WARN", "тег на текущем коммите", tag or "git tag v1.0 && git push --tags")
+    report("OK" if tag else "WARN", "tag on the current commit", tag or "git tag v1.0 && git push --tags")
     remote = git("remote", "get-url", "origin")
-    report("OK" if remote else "WARN", "remote origin", remote or "нет — репозиторий должен быть публичным")
+    report("OK" if remote else "WARN", "remote origin", remote or "none — the repository must be public")
 
 
 def check_determinism(video: str):
-    print(f"\n[8] Детерминизм: два прогона харнесса на {video}")
+    print(f"\n[8] Determinism: two harness runs on {video}")
     outs = []
     for k in (1, 2):
         out = ROOT / "debug" / f"_det_{k}.json"
@@ -209,19 +209,19 @@ def check_determinism(video: str):
         r = subprocess.run([sys.executable, "run_submission.py", "--videos", video, "--out", str(out),
                             "--team", "det"], cwd=ROOT, capture_output=True, text=True)
         if r.returncode != 0:
-            report("FAIL", f"прогон {k}", r.stderr.strip().splitlines()[-1] if r.stderr else "")
+            report("FAIL", f"run {k}", r.stderr.strip().splitlines()[-1] if r.stderr else "")
             return
         outs.append(json.loads(out.read_text())["videos"])
     a, b = outs
     same_ev = all(a[v]["events"] == b[v]["events"] for v in a)
-    report("OK" if same_ev else "FAIL", "events совпадают")
+    report("OK" if same_ev else "FAIL", "events match")
     diff = max((abs(x[1] - y[1]) for v in a for x, y in zip(a[v]["risk"], b[v]["risk"])), default=0.0)
-    report("OK" if diff <= 1e-3 else "WARN", "risk совпадает", f"макс. расхождение {diff:.4f}")
+    report("OK" if diff <= 1e-3 else "WARN", "risk matches", f"max. difference {diff:.4f}")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--determinism", default=None, help="видео для двойного прогона (самое короткое)")
+    ap.add_argument("--determinism", default=None, help="video for the double run (the shortest one)")
     args = ap.parse_args()
     check_layout()
     check_requirements()
@@ -234,7 +234,7 @@ def main():
         check_determinism(args.determinism)
     fails = [r for r in results if r[0] == "FAIL"]
     warns = [r for r in results if r[0] == "WARN"]
-    print(f"\nИтог: {len(fails)} FAIL, {len(warns)} WARN")
+    print(f"\nSummary: {len(fails)} FAIL, {len(warns)} WARN")
     sys.exit(1 if fails else 0)
 
 

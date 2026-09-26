@@ -1,6 +1,6 @@
-# Как default bytetrack.yaml, но track_buffer увеличен в разы —
-# чтобы трекер не терял ID у машин, стоящих в очереди на светофор
-# и периодически перекрывающихся соседними машинами.
+# Like the default bytetrack.yaml, but with track_buffer increased several times over,
+# so the tracker does not lose IDs of cars queued at a traffic light
+# that are periodically occluded by neighbouring cars.
 tracker_type: bytetrack
 track_high_thresh: 0.5
 track_low_thresh: 0.1

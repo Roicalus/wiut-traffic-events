@@ -1,31 +1,31 @@
-"""align.py — совмещение зон с конкретным видео.
+"""align.py — aligning the zones to a specific video.
 
-Камера "та же", но между записями она смещается: относительно C3896 (по
-нему рисовались зоны) C3902 сдвинут на 140x77 px, повёрнут на 1° и
-приближен на 1.5%, C3905 — на 41x42 px, 1.1°, 1.5%. Скрытый тест снят той
-же камерой, но другими записями, поэтому зоны переводятся в координаты
-КАЖДОГО видео по его кадрам.
+The camera is "the same", but it shifts between recordings: relative to C3896 (the
+zones were drawn on it) C3902 is shifted by 140x77 px, rotated by 1° and
+zoomed in by 1.5%, C3905 by 41x42 px, 1.1°, 1.5%. The hidden test was shot with the
+same camera but in other recordings, so the zones are mapped into the coordinates of
+EACH video from its own frames.
 
-Метод:
-  * CLAHE -> SIFT на уменьшенных кадрах (WORK_WIDTH) -> тест Лоу;
-  * модель — гомография (RANSAC): она описывает и наклон камеры, если её
-    перевесили под другим углом. Сдвиг + поворот + масштаб на
-    стресс-тесте с наклоном 2-8% промахивался на 49-262 px, гомография —
-    на 2-4 px; даже на самих сэмплах гомография точнее (1-4 px против
-    11-15). Если соответствий мало или гомография вырождена — откат на
-    сдвиг + поворот + масштаб, если и он неправдоподобен — зоны как есть;
-  * банк опорных кадров: основной (день, zones_ref.jpg) и дополнительные
-    (закат, сумерки) с заранее посчитанным переходом "основной -> этот
-    опорный". Тёмное видео сопоставляется с тёмным опорным кадром;
-  * по нескольким кадрам видео: сетка контрольных точек проецируется
-    каждой оценкой, по точкам берётся медиана, по медиане строится итоговая
-    гомография. Камера качается в пределах ролика (~10 px), а одиночный
-    кадр может поймать автобус перед фоном. Если оценки расходятся сильнее
-    MOVED_WARN_PX, в отчёт пишется, что камеру сдвигали по ходу ролика.
+Method:
+  * CLAHE -> SIFT on downscaled frames (WORK_WIDTH) -> Lowe's ratio test;
+  * the model is a homography (RANSAC): it also covers camera tilt if the camera was
+    re-mounted at a different angle. Shift + rotation + scale on the
+    stress test with 2-8% tilt missed by 49-262 px, the homography by
+    2-4 px; even on the samples themselves the homography is more accurate (1-4 px vs
+    11-15). If there are too few correspondences or the homography is degenerate — fall back to
+    shift + rotation + scale; if that is implausible too — zones as is;
+  * a bank of reference frames: the main one (day, zones_ref.jpg) and extra ones
+    (sunset, dusk) with a precomputed "main -> this
+    reference" transform. A dark video is matched against a dark reference frame;
+  * over several video frames: a grid of control points is projected by
+    each estimate, the median is taken per point, and the final
+    homography is fitted to the median. The camera sways within a clip (~10 px), and a single
+    frame may catch a bus in front of the background. If the estimates disagree by more than
+    MOVED_WARN_PX, the report says the camera was moved during the clip.
 
-Стресс-тест (tools/align_stress.py) на реальных кадрах 4 сэмплов: сдвиг до
-500x250 px, поворот до 8°, масштаб 0.8-1.25, наклон до 8%, перекрытие 30%
-кадра, размытие, шум, затемнение — ошибка центра light_roi <= 7 px.
+Stress test (tools/align_stress.py) on real frames of the 4 samples: shift up to
+500x250 px, rotation up to 8°, scale 0.8-1.25, tilt up to 8%, 30% of the frame
+occluded, blur, noise, darkening — light_roi centre error <= 7 px.
 """
 from __future__ import annotations
 
@@ -38,33 +38,33 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 REF_IMAGE = ROOT / "zones_ref.jpg"
 REF_META = ROOT / "zones_ref.json"
-WORK_WIDTH = 1280          # совмещаем на уменьшенных кадрах
-MIN_INLIERS = 40           # подобие
-MIN_INLIERS_H = 60         # гомография: 8 степеней свободы — нужно больше опоры
+WORK_WIDTH = 1280          # alignment runs on downscaled frames
+MIN_INLIERS = 40           # similarity
+MIN_INLIERS_H = 60         # homography: 8 degrees of freedom — needs more support
 MIN_INLIER_RATIO_H = 0.2
-RATIO = 0.8                # тест Лоу для SIFT
-N_FEATURES = 4000          # перебор соответствий квадратичен: 8000 — 3.4 с на кадр с банком из 3
-RANSAC_PX = 3.0            # порог RANSAC в px уменьшенного кадра
-SAMPLE_FRACS = (0.0, 0.5, 0.9)   # кадры видео для оценки (доли длительности)
-SHORT_VIDEO_SEC = 60.0           # короче — один кадр: перемотка 4K стоит ~2.5 с на кадр
-# Правдоподобие "та же камера": на стресс-тесте оценки точны (<= 7 px) далеко
-# за прежними границами 8% / 3° / 5%; неправдоподобное — это ошибка сопоставления
-# (глубокая ночь: 22 инлаера, промах на 2000+ px), а не настоящее смещение.
+RATIO = 0.8                # Lowe's ratio test for SIFT
+N_FEATURES = 4000          # matching is quadratic: 8000 costs 3.4 s per frame with a bank of 3
+RANSAC_PX = 3.0            # RANSAC threshold in px of the downscaled frame
+SAMPLE_FRACS = (0.0, 0.5, 0.9)   # video frames used for estimation (fractions of duration)
+SHORT_VIDEO_SEC = 60.0           # shorter than this — a single frame: seeking in 4K costs ~2.5 s per frame
+# "Same camera" plausibility: on the stress test estimates are accurate (<= 7 px) far
+# beyond the former limits of 8% / 3° / 5%; an implausible one is a matching error
+# (deep night: 22 inliers, off by 2000+ px), not a real displacement.
 MAX_SHIFT_FRAC = 0.25
 MAX_ROT_DEG = 10.0
-MAX_SCALE_DEV = 0.35             # приближение камеры 1.25 + своё 1.3% ещё проходит
-MAX_PERSPECTIVE_AREA_DEV = 0.5   # площадь кадра / масштаб^2: 0.5-1.5 (вырожденная перспектива — нет)
+MAX_SCALE_DEV = 0.35             # camera zoom 1.25 + its own 1.3% still passes
+MAX_PERSPECTIVE_AREA_DEV = 0.5   # frame area / scale^2: 0.5-1.5 (degenerate perspective is rejected)
 MOVED_WARN_PX = 40.0
-CONFIDENT_INLIERS = 400          # столько инлаеров — остальные опорные кадры не перебираем
+CONFIDENT_INLIERS = 400          # this many inliers — the remaining reference frames are not tried
 
 _refs_cache = None
 
 
-# ---------------------------------------------------------------- опорные кадры
+# ---------------------------------------------------------------- reference frames
 def save_reference(frame_bgr, video_name: str, frame_idx: int) -> None:
-    """Сохраняет ОСНОВНОЙ опорный кадр (уменьшенный) и метаданные рядом с
-    zones.json. Уже добавленные дополнительные опорные кадры сохраняются
-    (см. add_extra_reference)."""
+    """Saves the MAIN reference frame (downscaled) and metadata next to
+    zones.json. Extra reference frames already added are kept
+    (see add_extra_reference)."""
     global _refs_cache
     h, w = frame_bgr.shape[:2]
     cv2.imwrite(str(REF_IMAGE), _small(frame_bgr), [cv2.IMWRITE_JPEG_QUALITY, 92])
@@ -76,13 +76,13 @@ def save_reference(frame_bgr, video_name: str, frame_idx: int) -> None:
 
 
 def add_extra_reference(frame_bgr, name: str, video_name: str, frame_idx: int) -> dict:
-    """Дополнительный опорный кадр (другое освещение). Переход "основной ->
-    этот" считается здесь же, по основному опорному кадру; если совмещение
-    не удалось — кадр не добавляется."""
+    """Extra reference frame (different lighting). The "main ->
+    this" transform is computed right here, against the main reference frame; if alignment
+    fails, the frame is not added."""
     global _refs_cache
     H, rep = estimate(frame_bgr, refs=_load_refs()[:1])
     if H is None:
-        raise RuntimeError(f"дополнительный опорный кадр не совместился с основным: {rep}")
+        raise RuntimeError(f"extra reference frame could not be aligned with the main one: {rep}")
     h, w = frame_bgr.shape[:2]
     image = f"zones_ref_{name}.jpg"
     cv2.imwrite(str(REF_META.parent / image), _small(frame_bgr), [cv2.IMWRITE_JPEG_QUALITY, 92])
@@ -107,12 +107,12 @@ def _features(gray):
 
 
 def load_reference():
-    """Все опорные кадры и их SIFT-признаки (кэшируются на процесс)."""
+    """All reference frames and their SIFT features (cached per process)."""
     return _load_refs()
 
 
 def _load_refs() -> list[dict]:
-    """[{name, gray, kp, des, full_width, H_from_main}], основной — первым."""
+    """[{name, gray, kp, des, full_width, H_from_main}], the main one first."""
     global _refs_cache
     if _refs_cache is None:
         _refs_cache = []
@@ -135,14 +135,14 @@ def _load_refs() -> list[dict]:
     return _refs_cache
 
 
-# ---------------------------------------------------------------- оценка
+# ---------------------------------------------------------------- estimation
 def _to3(M):
     return np.vstack([M, [0.0, 0.0, 1.0]])
 
 
 def _describe(H, w, h):
-    """Сдвиг центра кадра, поворот и масштаб гомографии вокруг центра — для
-    отчёта и проверки правдоподобия."""
+    """Shift of the frame centre, rotation and scale of the homography around the centre — for
+    the report and the plausibility check."""
     c = np.array([[[w / 2, h / 2]]])
     d = 50.0
     p = cv2.perspectiveTransform(np.array([[[w / 2, h / 2], [w / 2 + d, h / 2]]]), H)[0]
@@ -162,27 +162,27 @@ def _plausible(desc, w):
 
 
 def _describe_camera(H, ref_w, ref_h, w):
-    """_describe смещения КАМЕРЫ: H переводит опорный кадр (ref_w) в кадр видео
-    (w), и у видео другого разрешения масштаб w/ref_w — это не движение
-    камеры. Сравниваем в масштабе опорного кадра."""
+    """_describe of the CAMERA displacement: H maps the reference frame (ref_w) to the video frame
+    (w), and for a video of a different resolution the scale w/ref_w is not camera
+    motion. The comparison is done at the reference frame's scale."""
     k = w / ref_w
     return _describe(np.diag([1 / k, 1 / k, 1.0]) @ H, ref_w, ref_h)
 
 
 def _estimate_one(ref, gray, kp_f, des_f, w, h):
-    """Гомография "опорный кадр ref -> этот кадр" в полных px, или None."""
+    """Homography "reference frame ref -> this frame" in full-resolution px, or None."""
     if ref["des"] is None or des_f is None or len(kp_f) < MIN_INLIERS:
         return None, {"status": "few_features"}
     matches = cv2.BFMatcher(cv2.NORM_L2).knnMatch(ref["des"], des_f, k=2)
     good = [m for m, n in (p for p in matches if len(p) == 2) if m.distance < RATIO * n.distance]
     if len(good) < MIN_INLIERS:
         return None, {"status": "few_matches", "matches": len(good)}
-    k_ref = ref["full_width"] / ref["gray"].shape[1]    # уменьшенный -> полный опорный
-    k_frm = w / gray.shape[1]                            # уменьшенный -> полный кадр видео
+    k_ref = ref["full_width"] / ref["gray"].shape[1]    # downscaled -> full reference
+    k_frm = w / gray.shape[1]                            # downscaled -> full video frame
     src = np.float32([ref["kp"][m.queryIdx].pt for m in good]) * k_ref
     dst = np.float32([kp_f[m.trainIdx].pt for m in good]) * k_frm
     thr = RANSAC_PX * k_frm
-    cv2.setRNGSeed(0)   # RANSAC случайный: фиксируем, чтобы два прогона совпадали
+    cv2.setRNGSeed(0)   # RANSAC is random: fix the seed so that two runs match
     H, inl = cv2.findHomography(src, dst, cv2.RANSAC, thr, maxIters=5000, confidence=0.999)
     n_h = int(inl.sum()) if inl is not None else 0
     ref_w, ref_h = ref["full_width"], ref["gray"].shape[0] * k_ref
@@ -204,18 +204,18 @@ def _estimate_one(ref, gray, kp_f, des_f, w, h):
 
 
 def estimate(frame_bgr, refs=None) -> tuple[np.ndarray | None, dict]:
-    """Гомография 3x3 (координаты зон, т.е. основного опорного кадра в полном
-    разрешении -> координаты этого кадра) и отчёт. Перебираются все опорные
-    кадры, берётся оценка с наибольшим числом инлаеров. None — не удалось."""
+    """3x3 homography (zone coordinates, i.e. the main reference frame at full
+    resolution -> coordinates of this frame) and a report. All reference
+    frames are tried, the estimate with the most inliers is taken. None — failed."""
     refs = _load_refs() if refs is None else refs
     if not refs:
-        return None, {"status": "no_reference", "hint": "нет zones_ref.jpg — tools/make_zone_ref.py"}
+        return None, {"status": "no_reference", "hint": "no zones_ref.jpg — tools/make_zone_ref.py"}
     h, w = frame_bgr.shape[:2]
     small = _small(frame_bgr)
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     kp_f, des_f = _features(gray)
     best, best_rep, fails = None, None, []
-    # сначала — ближайший по освещению опорный кадр: обычно его и хватает
+    # the reference frame closest in lighting goes first: it is usually enough
     brightness = float(gray.mean())
     for ref in sorted(refs, key=lambda r: abs(r["brightness"] - brightness)):
         H, rep = _estimate_one(ref, gray, kp_f, des_f, w, h)
@@ -225,7 +225,7 @@ def estimate(frame_bgr, refs=None) -> tuple[np.ndarray | None, dict]:
         if best is None or rep["inliers"] > best_rep["inliers"]:
             best, best_rep = H @ ref["H_from_main"], dict(rep, ref=ref["name"], ref_video=ref["video"])
         if best_rep is not None and best_rep["inliers"] >= CONFIDENT_INLIERS:
-            break   # похожий по свету опорный кадр даёт сотни инлаеров — дальше не ищем
+            break   # a reference frame with similar lighting gives hundreds of inliers — stop searching
     if best is None:
         return None, fails[0] if len(fails) == 1 else {"status": fails[0]["status"], "tried": fails}
     best /= best[2, 2]
@@ -235,7 +235,7 @@ def estimate(frame_bgr, refs=None) -> tuple[np.ndarray | None, dict]:
     return best, best_rep
 
 
-# ---------------------------------------------------------------- видео
+# ---------------------------------------------------------------- video
 def first_frame(video_path, frame_idx: int = 10):
     cap = cv2.VideoCapture(str(video_path))
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -248,8 +248,8 @@ def first_frame(video_path, frame_idx: int = 10):
 
 
 def transform_zones(zones: dict, M: np.ndarray | None) -> dict:
-    """zones: имя -> массив/список точек; M — 2x3 (аффинная) или 3x3
-    (гомография). Возвращает новый dict с np.float32."""
+    """zones: name -> array/list of points; M is 2x3 (affine) or 3x3
+    (homography). Returns a new dict with np.float32."""
     out = {}
     for name, pts in zones.items():
         arr = np.asarray(pts, dtype=np.float64).reshape(-1, 2)
@@ -266,9 +266,9 @@ def _control_grid(w, h, n=6):
 
 
 def estimate_video(video_path) -> tuple[np.ndarray | None, dict]:
-    """Оценки по кадрам SAMPLE_FRACS, сведённые через медиану проекций сетки
-    контрольных точек (устойчиво к одной плохой оценке и не требует, чтобы
-    все кадры дали одну и ту же модель)."""
+    """Estimates from the SAMPLE_FRACS frames, combined via the median of the projections of a
+    control-point grid (robust to one bad estimate and does not require
+    all frames to yield the same model)."""
     cap = cv2.VideoCapture(str(video_path))
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -300,14 +300,14 @@ def estimate_video(video_path) -> tuple[np.ndarray | None, dict]:
     spread = float(np.abs(proj - median).max()) if len(Hs) > 1 else 0.0
     report["spread_px"] = round(spread, 1)
     if spread > MOVED_WARN_PX:
-        report["warning"] = "оценки по кадрам расходятся — камеру, похоже, сдвигали по ходу ролика"
+        report["warning"] = "per-frame estimates disagree — the camera seems to have been moved during the clip"
     return H, report
 
 
 def aligned_zones(video_path, zones: dict) -> tuple[dict, dict]:
     M, report = estimate_video(video_path)
     if M is None:
-        # совмещение не удалось — но если разрешение другое, зоны хотя бы масштабируем
+        # alignment failed — but if the resolution differs, at least rescale the zones
         refs = _load_refs()
         cap = cv2.VideoCapture(str(video_path))
         w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)

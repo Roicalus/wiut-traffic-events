@@ -1,66 +1,68 @@
-# camera_own.md — сцена по кадрам из samples (C3896/97/902/905)
+# camera_own.md — the scene from sample frames (C3896/97/902/905)
 
-Организаторы не приложили `camera.md`, разметка сцены ниже сделана по кадрам
-вручную. Расположение примерное, координаты уточнять по факту при разметке
-(пиксели в исходном разрешении 3840x2160).
+The organisers did not provide a `camera.md`; the scene layout below was
+made by hand from frames. Positions are approximate; refine coordinates
+against the actual footage when annotating (pixels at the source resolution
+3840x2160).
 
-## Общая планировка
+## General layout
 
-- Съёмка с высокой точки (столб/консоль), один ракурс, без движения камеры.
-- Главная многополосная магистраль проходит по дальней части кадра, минимум
-  3 полосы в каждую сторону, разделена жёлтой осевой линией, за ней —
-  тротуар и деревья.
-- Основной поток машин в кадре движется **от дальней части кадра к камере**
-  (сверху вниз/по диагонали) и упирается в очередь перед пешеходным
-  переходом.
-- Перед камерой — широкая мощёная площадь-перекрёсток с треугольными и
-  ромбовидными бордюрными островками (розовая плитка).
-- Два перехода: "дальний" (зебра через магистраль, ближе к верхней трети
-  кадра) и "ближний" (диагональный, пересекает саму площадь внизу кадра).
-- Светофорная П-образная рама с сигналами расположена прямо перед дальним
-  переходом, стоп-линия примерно совпадает с местом, где встаёт очередь
-  машин.
-- Синий круглый знак со стрелкой вправо на одном из островков —
-  предписанное движение направо для части полос.
-- По дальним полосам магистрали периодически проходят городские автобусы
-  (маршруты замечены: 60, 14).
+- Shot from a high point (pole/bracket), a single view, no camera motion.
+- The main multi-lane road runs across the far part of the frame, at least
+  3 lanes each way, split by a yellow centre line, with a sidewalk and trees
+  behind it.
+- The main flow of cars in the frame moves **from the far part of the frame
+  towards the camera** (top to bottom/diagonally) and runs into a queue in
+  front of the pedestrian crossing.
+- In front of the camera is a wide paved square/intersection with triangular
+  and diamond-shaped curbed islands (pink paving).
+- Two crossings: the "far" one (a zebra across the main road, near the upper
+  third of the frame) and the "near" one (diagonal, crossing the square
+  itself at the bottom of the frame).
+- A U-shaped signal gantry stands right in front of the far crossing; the
+  stop line roughly coincides with where the queue of cars stops.
+- A blue round sign with a right arrow on one of the islands: mandatory
+  right turn for some of the lanes.
+- City buses periodically pass along the far lanes of the main road (routes
+  seen: 60, 14).
 
-## Направления движения
+## Directions of travel
 
-- Все замеченные машины на дальних полосах едут в одном согласованном
-  направлении (к камере / через переход), выезда на встречную полосу не
-  замечено — `wrong_way` в этих сэмплах маловероятен, но проверять на
-  остальных видео.
-- Часть потока после перехода уходит направо (по знаку), часть, видимо,
-  продолжает через площадь прямо.
+- All cars seen on the far lanes travel in one consistent direction
+  (towards the camera / across the crossing); no driving into the oncoming
+  lane was seen, so `wrong_way` is unlikely in these samples, but check on
+  the other videos.
+- After the crossing, part of the flow turns right (per the sign), part
+  apparently continues straight across the square.
 
-## Что реально происходит в сэмплах
+## What actually happens in the samples
 
-- **Очереди/затор**: в дневных и закатных кадрах регулярно 5-8+ машин стоят
-  в несколько рядов перед переходом — кандидат на `congestion` и/или
-  `stopped_vehicle` (нужно смотреть длительность стоянки, >=10с не в
-  очереди на сигнал — именно `stopped_vehicle`; стоящие в очереди на
-  светофор в `congestion`, не `stopped_vehicle`).
-- **Пешеходы**: массовый переход по зебре, в одном кадре — большая группа
-  плюс отдельный пешеход не строго по полосам (возможный `jaywalking`,
-  проверить по факту на видео, не на одном кадре).
-- **Лёгкий транспорт**: в сумеречном кадре — мопед/электросамокат-курьер
-  едет через переход; в закатном — велосипедист у обочины. Стоит
-  классифицировать как транспортное средство для трекинга (не пешеход),
-  даже если YOLO/COCO их путает.
-- **Светофор**: рама с сигналами в кадре есть, но сам цвет сигнала на
-  стоп-кадрах не считан (слишком мелко/не видно с этого ракурса на
-  скриншотах) — нужно смотреть видео покадрово рядом с рамой, чтобы понять,
-  насколько надёжно можно детектировать красный/зелёный.
-- **Время суток**: сэмплы захватывают день, закат (жёсткие тени, встречный
-  свет) и сумерки (включены фары/габариты) — освещение будет сильно влиять
-  на детекцию, особенно на закате и в сумерках.
+- **Queues/jams**: in daytime and sunset frames 5-8+ cars regularly stand in
+  several rows in front of the crossing, a candidate for `congestion` and/or
+  `stopped_vehicle` (look at the stop duration: >=10 s not in a signal
+  queue is `stopped_vehicle`; cars queuing at the light go to
+  `congestion`, not `stopped_vehicle`).
+- **Pedestrians**: mass crossing on the zebra; one frame has a large group
+  plus a single pedestrian not strictly within the stripes (possible
+  `jaywalking`, verify on the video, not on a single frame).
+- **Light vehicles**: in the dusk frame a moped/e-scooter courier rides
+  across the crossing; in the sunset frame a cyclist at the curb. They
+  should be classified as vehicles for tracking (not pedestrians), even if
+  YOLO/COCO confuses them.
+- **Traffic light**: the signal gantry is in the frame, but the signal
+  colour itself could not be read from the still frames (too small/not
+  visible from this angle in the screenshots); the video needs to be viewed
+  frame by frame near the gantry to see how reliably red/green can be
+  detected.
+- **Time of day**: the samples cover day, sunset (hard shadows, backlight)
+  and dusk (headlights/side lights on); lighting will strongly affect
+  detection, especially at sunset and dusk.
 
-## Что дальше
+## Next steps
 
-- Проверить эти наблюдения по видео целиком (не по одному кадру), особенно
-  jaywalking-кандидата и цвет сигнала светофора.
-- Если координаты полос/стоп-линии/переходов нужны для правил — разметить
-  их вручную по одному кадру каждого видео (полигоны/линии в пикселях) и
-  сохранить в `src/scene_layout.py` или json, привязанный к video_id (ракурс
-  один и тот же для всех сэмплов, так что разметка общая).
+- Verify these observations on the full videos (not on a single frame),
+  especially the jaywalking candidate and the traffic light colour.
+- If lane/stop line/crossing coordinates are needed for the rules, annotate
+  them by hand on one frame of each video (polygons/lines in pixels) and
+  store them in `src/scene_layout.py` or a json keyed by video_id (the view
+  is the same for all samples, so the annotation is shared).

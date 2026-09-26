@@ -1,24 +1,24 @@
 """
-obstacle_fire.py — детекторы road_obstacle и fire_smoke за ОДИН проход.
+obstacle_fire.py — road_obstacle and fire_smoke detectors in ONE pass.
 
-Оба класса — чистый CV без YOLO (background subtraction для obstacle,
-HSV-эвристика для fire_smoke). Раньше это были два отдельных прохода по
-4K-видео, каждый на полном разрешении. Теперь:
+Both classes are pure CV without YOLO (background subtraction for obstacle,
+an HSV heuristic for fire_smoke). They used to be two separate passes over the
+4K video, each at full resolution. Now:
 
-  * кадр декодируется один раз и сразу уменьшается до SCAN_WIDTH по ширине;
-    MOG2, морфология и HSV работают на уменьшенном кадре (в ~16 раз меньше
-    пикселей, чем на 4K);
-  * фильтр "блоб уже покрыт трекнутым объектом" выполняется ПОСЛЕ прохода
-    и векторизован (раньше — цикл по всем записям трекера на каждый блоб);
-  * ObstacleFireScanner можно подключить к проходу трекера через on_frame
-    (см. pipeline.extract) — тогда отдельного декодирования видео нет совсем;
-  * прогресс печатается в консоль.
+  * a frame is decoded once and immediately downscaled to SCAN_WIDTH in width;
+    MOG2, morphology and HSV run on the downscaled frame (~16x fewer
+    pixels than 4K);
+  * the "blob already covered by a tracked object" filter runs AFTER the pass
+    and is vectorized (previously a loop over all tracker records for every blob);
+  * ObstacleFireScanner can be attached to the tracker pass via on_frame
+    (see pipeline.extract) — then there is no separate video decoding at all;
+  * progress is printed to the console.
 
-Все пороги ниже заданы в пикселях исходного 4K-кадра (3840x2160) и
-пересчитываются под уменьшенный кадр автоматически.
+All thresholds below are in pixels of the original 4K frame (3840x2160) and
+are rescaled to the downscaled frame automatically.
 
-Оба детектора — первая версия, НЕ откалибрована против разметки. Если на
-evaluate.py они в основном мажут — классы не включены в solution.CLASSES.
+Both detectors are a first version, NOT calibrated against the labels. If they
+mostly miss on evaluate.py, the classes are not included in solution.CLASSES.
 """
 from __future__ import annotations
 
@@ -37,25 +37,25 @@ except ImportError:
     from rules import load_zones, _zones_by_prefix
 
 
-# ---------------------------------------------------------------- общие
-SCAN_WIDTH = 960             # ширина кадра, на котором работают оба детектора
-SAMPLE_SEC = 0.15            # обрабатывать не чаще, чем раз в столько секунд видео
-PROGRESS_EVERY_SEC = 60.0    # печатать прогресс раз в столько секунд видео
+# ---------------------------------------------------------------- common
+SCAN_WIDTH = 960             # width of the frame both detectors run on
+SAMPLE_SEC = 0.15            # process at most once per this many seconds of video
+PROGRESS_EVERY_SEC = 60.0    # print progress once per this many seconds of video
 
 # ---------------------------------------------------------------- road_obstacle
-MIN_OBSTACLE_AREA = 900      # px^2 в исходном разрешении
-MAX_OBSTACLE_AREA_FRAC = 0.08  # доля площади roadway-зоны ("весь кадр стал foreground")
-STABLE_SEC = 4.0             # блоб должен держаться на месте столько секунд
-MIN_EVENT_SEC = 4.0          # короче — дропаем как шум
-MAX_CENTER_DRIFT_PX = 60.0   # дрейф центра блоба (исходные px)
-MAX_GAP_SEC = 2.0            # разрыв между сэмплами того же блоба
-MOG_LEARNING_RATE = 0.0005    # скорость "впитывания" неподвижного предмета в фон (сэмпл = ~0.2 с)
-COVERED_RADIUS_PX = 80.0     # блоб ближе этого к трекнутому объекту — не obstacle
+MIN_OBSTACLE_AREA = 900      # px^2 at the original resolution
+MAX_OBSTACLE_AREA_FRAC = 0.08  # fraction of the roadway zone area ("the whole frame became foreground")
+STABLE_SEC = 4.0             # a blob must stay in place for this many seconds
+MIN_EVENT_SEC = 4.0          # shorter ones are dropped as noise
+MAX_CENTER_DRIFT_PX = 60.0   # blob centre drift (original px)
+MAX_GAP_SEC = 2.0            # gap between samples of the same blob
+MOG_LEARNING_RATE = 0.0005    # rate at which a static object is "absorbed" into the background (sample = ~0.2 s)
+COVERED_RADIUS_PX = 80.0     # a blob closer than this to a tracked object is not an obstacle
 COVERED_WINDOW_SEC = 1.0
 
 # ---------------------------------------------------------------- fire_smoke
-FIRE_MIN_PIXELS = 250        # "огненных" пикселей (в пересчёте на 4K-кадр)
-SMOKE_MIN_PIXELS = 4000      # серо-дымных пикселей (в пересчёте на 4K-кадр)
+FIRE_MIN_PIXELS = 250        # "fire" pixels (scaled to the 4K frame)
+SMOKE_MIN_PIXELS = 4000      # grey smoke pixels (scaled to the 4K frame)
 CONFIRM_SAMPLES = 3
 MAX_GAP_SEC_FIRE = 3.0
 MIN_EVENT_SEC_FIRE = 2.0
@@ -78,12 +78,12 @@ def _smoke_pixels(hsv):
 
 
 class ObstacleFireScanner:
-    """Потоковый сканер: кормите кадрами по порядку через feed(), в конце
-    вызовите finish(records) -> список событий road_obstacle + fire_smoke.
+    """Streaming scanner: feed frames in order via feed(), then at the end
+    call finish(records) -> list of road_obstacle + fire_smoke events.
 
-    frame может быть обрезан сверху (как в track.run_tracker): передайте
-    full_height — высоту ПОЛНОГО кадра, и сканер сам вычислит смещение.
-    Зоны заданы в координатах полного кадра.
+    frame may be cropped at the top (as in track.run_tracker): pass
+    full_height — the height of the FULL frame — and the scanner computes the offset itself.
+    Zones are given in full-frame coordinates.
     """
 
     def __init__(self, zones, fps: float, full_height: int | None = None, progress: bool = True):
@@ -97,8 +97,8 @@ class ObstacleFireScanner:
         self._last_t = -1e9
         self._next_progress = PROGRESS_EVERY_SEC
         self._bg = None
-        self._mask = None            # маска проезжей части (масштаб SCAN_WIDTH), None -> obstacle выключен
-        self._blob_samples = []      # [(t, [(cx, cy) в исходных px, ...]), ...]
+        self._mask = None            # roadway mask (SCAN_WIDTH scale), None -> obstacle disabled
+        self._blob_samples = []      # [(t, [(cx, cy) in original px, ...]), ...]
         self._fire_raw = []          # [(t, is_candidate), ...]
 
     # ------------------------------------------------------------ setup
@@ -125,7 +125,7 @@ class ObstacleFireScanner:
             self._bg = cv2.createBackgroundSubtractorMOG2(history=200, varThreshold=40, detectShadows=True)
         self._ready = True
 
-    # ------------------------------------------------------------ прогон
+    # ------------------------------------------------------------ run
     def feed(self, frame, t_sec: float) -> None:
         if self.failed or t_sec - self._last_t < SAMPLE_SEC:
             return
@@ -142,7 +142,7 @@ class ObstacleFireScanner:
         # --- road_obstacle
         if self._bg is not None:
             fg = self._bg.apply(small, learningRate=MOG_LEARNING_RATE)
-            fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)[1]  # тени MOG2 = 127
+            fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)[1]  # MOG2 shadows = 127
             fg = cv2.bitwise_and(fg, self._mask)
             fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, self._k_open)
             fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, self._k_close)
@@ -168,16 +168,16 @@ class ObstacleFireScanner:
         self._fire_raw.append((t_sec, is_candidate))
 
     def on_tracker_frame(self, cropped_frame, t_sec, _result) -> None:
-        """Колбэк для track.run_tracker(on_frame=...). Ошибка сканера не
-        должна ронять проход трекера: при первом же исключении сканер
-        отключается, road_obstacle/fire_smoke для видео пропускаются."""
+        """Callback for track.run_tracker(on_frame=...). A scanner error must not
+        crash the tracker pass: on the first exception the scanner
+        is disabled and road_obstacle/fire_smoke are skipped for the video."""
         try:
             self.feed(cropped_frame, t_sec)
         except Exception as exc:
             self.failed = True
-            print(f"[obstacle_fire] сканер упал ({exc}); road_obstacle/fire_smoke пропущены")
+            print(f"[obstacle_fire] scanner crashed ({exc}); road_obstacle/fire_smoke skipped")
 
-    # ------------------------------------------------------------ итоги
+    # ------------------------------------------------------------ results
     def finish(self, records=None) -> list[list]:
         if self.failed:
             return []
@@ -260,7 +260,7 @@ class ObstacleFireScanner:
 
 
 def _merge_intervals(events, max_gap=1.0):
-    """Сливает соседние события одного класса с разрывом <= max_gap."""
+    """Merges adjacent events of the same class with a gap <= max_gap."""
     if not events:
         return []
     events = sorted(events, key=lambda e: (e[2], e[0]))
@@ -276,9 +276,9 @@ def _merge_intervals(events, max_gap=1.0):
     return merged
 
 
-# ---------------------------------------------------------------- автономный проход
+# ---------------------------------------------------------------- standalone pass
 def scan_video(video_path, zones, records=None, progress: bool = True) -> list[list]:
-    """Один собственный проход по видео (если сканер не подключён к трекеру)."""
+    """One dedicated pass over the video (when the scanner is not attached to the tracker)."""
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return []
@@ -304,8 +304,8 @@ def main():
     ap.add_argument("--video", required=True)
     ap.add_argument("--zones", default="zones.json")
     ap.add_argument("--tracks", default=None,
-                    help="src/tracks/*.json из track.py (для фильтра 'уже покрыто "
-                         "трекнутым объектом'; без него фильтр выключен)")
+                    help="src/tracks/*.json from track.py (for the 'already covered by a "
+                         "tracked object' filter; without it the filter is off)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -317,12 +317,12 @@ def main():
     elapsed = time.perf_counter() - t0
 
     n_obs = sum(1 for e in events if e[2] == "road_obstacle")
-    print(f"road_obstacle: {n_obs}, fire_smoke: {len(events) - n_obs}, время {elapsed:.0f} с")
+    print(f"road_obstacle: {n_obs}, fire_smoke: {len(events) - n_obs}, time {elapsed:.0f} s")
     for s, e, lbl in events:
         print(f"  [{s:7.2f} - {e:7.2f}] {lbl}")
     if args.out:
         Path(args.out).write_text(json.dumps(events, indent=1))
-        print(f"Сохранено: {args.out}")
+        print(f"Saved: {args.out}")
 
 
 if __name__ == "__main__":

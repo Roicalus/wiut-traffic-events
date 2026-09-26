@@ -1,11 +1,11 @@
-"""light_check.py — проверка распознавания светофора глазами.
+"""light_check.py — visual check of traffic-light recognition.
 
     python tools/light_check.py --videos samples --every 4
 
-Для каждого видео: кроп light_roi (после совмещения зон) каждые --every
-секунд, подписи двух методов (P = position, H = hue) -> одна картинка-сетка
-debug/light_<видео>.jpg. Пролистайте: подпись P должна совпадать с тем,
-какая секция реально горит. Внизу печатается, как часто методы расходятся.
+For each video: a light_roi crop (after zone alignment) every --every
+seconds, labelled by both methods (P = position, H = hue) -> one grid image
+debug/light_<video>.jpg. Scroll through it: the P label must match the section
+that is actually lit. At the end it prints how often the methods disagree.
 """
 import argparse
 import sys
@@ -27,7 +27,7 @@ COL = {"red": (0, 0, 255), "yellow": (0, 220, 255), "green": (0, 255, 0), "unkno
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--videos", required=True)
-    ap.add_argument("--every", type=float, default=4.0, help="шаг по времени, с")
+    ap.add_argument("--every", type=float, default=4.0, help="time step, s")
     ap.add_argument("--cols", type=int, default=12)
     ap.add_argument("--out-dir", default=str(ROOT / "debug"))
     args = ap.parse_args()
@@ -69,8 +69,8 @@ def main():
         out = Path(args.out_dir) / f"light_{path.stem}.jpg"
         cv2.imwrite(str(out), np.vstack(rows))
         disagree = sum(v for (p, h), v in stats.items() if p != h)
-        print(f"[{path.name}] совмещение: {rep.get('status')} dx={rep.get('dx')} dy={rep.get('dy')}; "
-              f"методы расходятся в {disagree}/{sum(stats.values())} кадрах -> {out}")
+        print(f"[{path.name}] alignment: {rep.get('status')} dx={rep.get('dx')} dy={rep.get('dy')}; "
+              f"methods disagree in {disagree}/{sum(stats.values())} frames -> {out}")
         print("    ", dict(sorted(Counter(p for p, _ in stats.elements()).items())), "(position)")
 
 

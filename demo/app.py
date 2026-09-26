@@ -16,12 +16,12 @@ import tempfile
 import time
 from pathlib import Path
 
-try:                        # Hugging Face ZeroGPU: GPU только внутри @spaces.GPU
-    import spaces           # импортируется до torch — пакет его патчит
+try:                        # Hugging Face ZeroGPU: the GPU exists only inside @spaces.GPU
+    import spaces           # imported before torch — the package patches it
 except ImportError:
     spaces = None
 if spaces is not None:
-    os.environ.setdefault("WIUT_DEVICE", "cpu")   # при импорте CUDA ещё нет
+    os.environ.setdefault("WIUT_DEVICE", "cpu")   # CUDA is not available yet at import time
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -51,7 +51,7 @@ processed too, but the scene zones will not fit them.
 
 
 def _gpu_seconds(path, info):
-    """Сколько GPU-времени заказать у ZeroGPU: по длине ролика, не больше лимита."""
+    """How much GPU time to request from ZeroGPU: by clip length, capped at the limit."""
     return int(min(GPU_MAX_SEC, 30 + 0.6 * info["duration"]))
 
 
@@ -129,7 +129,7 @@ def run(video, progress=gr.Progress()):
             say(0.3, "Part A + Part B on a GPU")
             try:
                 computed = compute_on_gpu(str(path), info)
-            except Exception as exc:  # noqa: BLE001 — квота ZeroGPU и т.п.: считаем на CPU
+            except Exception as exc:  # noqa: BLE001 — ZeroGPU quota etc.: compute on the CPU
                 note = f"GPU was not available ({type(exc).__name__}: {str(exc)[:120]}); computed on the CPU"
                 print(f"[demo] {note}")
                 track.set_device("cpu")

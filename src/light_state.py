@@ -1,10 +1,10 @@
-"""light_state.py — классифицирует цвет сигнала светофора в ROI 'light_roi'
-из zones.json на каждом N-м кадре видео.
+"""light_state.py — classifies the traffic-light colour in the 'light_roi' ROI
+from zones.json on every N-th frame of the video.
 
-В сабмите светофор читается внутри прохода трекера (LightScanner,
-pipeline.extract): отдельного декодирования видео нет. run_light_state() и
-CLI (main()) — только для отладки: отдельный проход, JSON и распределение
-состояний, чтобы проверить, что ROI не промахнулся мимо светофора.
+In the submission the light is read inside the tracker pass (LightScanner,
+pipeline.extract): there is no separate video decode. run_light_state() and the
+CLI (main()) are for debugging only: a separate pass, JSON and the state
+distribution, to check that the ROI has not missed the traffic light.
 """
 import argparse
 import json
@@ -13,8 +13,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-MIN_BRIGHT_PIXELS = 15  # меньше этого ярких пикселей нужного цвета -> "unknown",
-                          # не гадаем на шуме в маленьком ROI
+MIN_BRIGHT_PIXELS = 15  # fewer bright pixels of the right colour than this -> "unknown",
+                          # we do not guess on noise in a small ROI
 
 
 def classify_roi_hue(roi_bgr, min_pixels=MIN_BRIGHT_PIXELS) -> str:
@@ -34,27 +34,27 @@ def classify_roi_hue(roi_bgr, min_pixels=MIN_BRIGHT_PIXELS) -> str:
     return best
 
 
-# Режим классификации:
-#   "position" — какая из трёх секций (верх/середина/низ) горит. Не зависит
-#                от оттенка освещения (закат, фары, стоп-сигналы за рамкой).
-#                Требует, чтобы light_roi плотно облегал ВЕРТИКАЛЬНЫЙ корпус
-#                светофора (сверху красный, снизу зелёный).
-#   "hue"      — старый способ: считать пиксели нужного цвета в рамке.
-#   "auto"     — position, если рамка вытянута по вертикали (h/w >= 1.5).
+# Classification mode:
+#   "position" — which of the three sections (top/middle/bottom) is lit. Independent
+#                of the lighting hue (sunset, headlights, brake lights behind the box).
+#                Requires light_roi to fit tightly around the VERTICAL housing of
+#                the traffic light (red on top, green at the bottom).
+#   "hue"      — the old way: count pixels of the right colour in the box.
+#   "auto"     — position if the box is elongated vertically (h/w >= 1.5).
 LIGHT_MODE = "auto"
-# Днём на солнце горящая лампа тусклая: 98-й перцентиль V горящей секции
-# 45-115 при 0-40 у погашенных (C3896, C3897); на закате/в сумерках — 255.
-# Поэтому решает РАЗНИЦА с соседней секцией, а абсолютный порог — только
-# отсечка "ничего не горит". Было 150: дневные ролики целиком "unknown".
-# С этими порогами на всех 4 сэмплах читается один и тот же цикл:
-# красный ~37 с -> зелёный ~37 с -> жёлтый 3 с.
-LAMP_MIN_V = 40          # яркость горящей лампы (0-255), ниже — не горит
-LAMP_MIN_S = 70          # горящая лампа насыщенная, серый корпус/асфальт — нет
-LAMP_MARGIN = 35         # на сколько горящая секция ярче остальных
-INNER_X, INNER_Y = 0.2, 0.04   # отрезаем края рамки: туда попадает фон (небо, листва)
-OCCLUDE_FRAC = 0.15      # доля рамки светофора под боксом машины = перекрытие
-MIN_CONFIDENT_FRAC = 0.3  # реже уверенных показаний — рамка не на светофоре, не доверяем
-OCCLUDER_BELOW_PX = 60   # низ бокса перекрывающей машины ниже низа рамки (она ближе)
+# In daytime sun a lit lamp is dim: the 98th percentile of V for the lit section is
+# 45-115 vs 0-40 for unlit ones (C3896, C3897); at sunset/dusk it is 255.
+# So the DIFFERENCE from the neighbouring section decides, and the absolute threshold is only
+# the "nothing is lit" cut-off. It used to be 150: daytime clips were "unknown" throughout.
+# With these thresholds all 4 samples read the same cycle:
+# red ~37 s -> green ~37 s -> yellow 3 s.
+LAMP_MIN_V = 40          # brightness of a lit lamp (0-255), below this it is off
+LAMP_MIN_S = 70          # a lit lamp is saturated, the grey housing/asphalt is not
+LAMP_MARGIN = 35         # how much brighter the lit section is than the others
+INNER_X, INNER_Y = 0.2, 0.04   # trim the box edges: background gets in there (sky, foliage)
+OCCLUDE_FRAC = 0.15      # fraction of the light box under a vehicle box = occlusion
+MIN_CONFIDENT_FRAC = 0.3  # fewer confident readings than this — the box is not on the light, do not trust it
+OCCLUDER_BELOW_PX = 60   # bottom of the occluding vehicle's box is below the bottom of the box (it is closer)
 
 
 def _lamp_scores(roi_bgr):
@@ -64,7 +64,7 @@ def _lamp_scores(roi_bgr):
         roi_bgr = roi_bgr[dy:h0 - dy, dx:w0 - dx]
     hsv = cv2.cvtColor(cv2.GaussianBlur(roi_bgr, (3, 3), 0), cv2.COLOR_BGR2HSV)
     v = hsv[..., 2].astype(np.float32)
-    v[hsv[..., 1] < LAMP_MIN_S] = 0          # только насыщенные (цветные) пиксели
+    v[hsv[..., 1] < LAMP_MIN_S] = 0          # saturated (coloured) pixels only
     h = v.shape[0]
     bands = (v[: h // 3], v[h // 3: 2 * h // 3], v[2 * h // 3:])
     return [float(np.percentile(b, 98)) if b.size else 0.0 for b in bands]
@@ -97,28 +97,28 @@ def bbox_from_zone(poly):
     return int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
 
 
-SKIP_YELLOW_CONFIRM_SEC = 3.0   # зелёный -> красный без жёлтого: только если держится столько
-HOLD_MAX_SEC = 45.0             # дольше фазы без уверенного показания — цвет неизвестен
+SKIP_YELLOW_CONFIRM_SEC = 3.0   # green -> red without yellow: only if it holds this long
+HOLD_MAX_SEC = 45.0             # longer than a phase without a confident reading — colour is unknown
 
 
 def smooth_states(raw, confirm_frames=2, skip_yellow_sec=SKIP_YELLOW_CONFIRM_SEC,
                   hold_max_sec=HOLD_MAX_SEC):
-    """Sticky-hold сглаживание: [(t, state)] -> [[t, state]].
+    """Sticky-hold smoothing: [(t, state)] -> [[t, state]].
 
-    Последний УВЕРЕННЫЙ (не "unknown") цвет держится, пока не встретится
-    ДРУГОЙ уверенный цвет подряд confirm_frames раз. "unknown" (блик,
-    перекрытие ROI, тёмный кадр) не сбрасывает состояние.
+    The last CONFIDENT (not "unknown") colour is held until a
+    DIFFERENT confident colour appears confirm_frames times in a row. "unknown" (glare,
+    ROI occlusion, dark frame) does not reset the state.
 
-    Цикл светофора — зелёный -> жёлтый (3 с) -> красный. Прямой скачок
-    зелёный -> красный почти всегда артефакт: машина закрыла зелёную
-    секцию, и тусклая негорящая красная линза днём читается как горящая
-    (C3896, 189.8-192.5 с — ложный red_light). Такой переход принимается,
-    только если красный держится skip_yellow_sec (жёлтый иногда
-    пропускается при 10 Гц — тогда красный просто опоздает на эти секунды).
+    The light cycle is green -> yellow (3 s) -> red. A direct jump
+    green -> red is almost always an artefact: a vehicle covered the green
+    section, and the dim unlit red lens reads as lit in daytime
+    (C3896, 189.8-192.5 s — a false red_light). Such a transition is accepted
+    only if red holds for skip_yellow_sec (yellow is sometimes
+    missed at 10 Hz — then red is simply late by those seconds).
 
-    Без уверенных показаний дольше hold_max_sec (длиннее одной фазы: ROI
-    закрыт, блики, камера уехала) цвет сбрасывается в "unknown", иначе одно
-    старое "красный" держалось бы минутами и давало ложные red_light.
+    With no confident readings for longer than hold_max_sec (longer than one phase: ROI
+    covered, glare, camera moved) the colour is reset to "unknown", otherwise a single
+    stale "red" would be held for minutes and produce false red_light events.
     """
     result = []
     last_known = "unknown"
@@ -146,17 +146,17 @@ def smooth_states(raw, confirm_frames=2, skip_yellow_sec=SKIP_YELLOW_CONFIRM_SEC
 
 
 class LightScanner:
-    """Потоковый классификатор светофора: кормится кадрами из прохода
-    трекера (track.run_tracker(on_frame=...)), отдельного декодирования
-    4K-видео не нужно — это экономит целый проход по ролику.
+    """Streaming traffic-light classifier: fed with frames from the tracker
+    pass (track.run_tracker(on_frame=...)), so no separate decode of the
+    4K video is needed — this saves a whole pass over the clip.
 
-    Кадр может быть обрезан сверху: передайте full_height, смещение
-    посчитается само (как в ObstacleFireScanner).
+    The frame may be cropped at the top: pass full_height and the offset
+    is computed automatically (as in ObstacleFireScanner).
     """
 
     def __init__(self, zones, full_height=None, min_pixels=MIN_BRIGHT_PIXELS):
         if "light_roi" not in zones:
-            raise ValueError("В zones нет 'light_roi'")
+            raise ValueError("zones has no 'light_roi'")
         self.box = bbox_from_zone(zones["light_roi"])
         self.n_occluded = 0
         self.full_height = full_height
@@ -172,11 +172,11 @@ class LightScanner:
         self.raw.append((t_sec, state))
 
     def occluded(self, result, y_off) -> bool:
-        """ROI закрыт машиной, которая стоит БЛИЖЕ к камере, чем светофор:
-        бокс накрывает >= OCCLUDE_FRAC рамки, а его низ (точка на земле)
-        ниже низа рамки больше чем на OCCLUDER_BELOW_PX. Машины на дальних
-        полосах за светофором тоже пересекают рамку на картинке, но стоят
-        выше по кадру и ничего не закрывают."""
+        """The ROI is covered by a vehicle standing CLOSER to the camera than the light:
+        the box covers >= OCCLUDE_FRAC of the light box, and its bottom (ground point)
+        is more than OCCLUDER_BELOW_PX below the bottom of the light box. Vehicles in the far
+        lanes behind the light also cross the box in the image, but they sit
+        higher in the frame and cover nothing."""
         if result is None or result.boxes is None or len(result.boxes) == 0:
             return False
         x1, y1, x2, y2 = self.box
@@ -200,31 +200,31 @@ class LightScanner:
             self.feed(cropped_frame, t_sec)
         except Exception as exc:
             self.failed = True
-            print(f"[light_state] упал ({exc}); red_light/stop_line пропущены")
+            print(f"[light_state] failed ({exc}); red_light/stop_line skipped")
 
     def samples(self, confirm_frames=2):
-        """Сглаженный ряд состояний, или None, если светофору нельзя верить:
-        сканер упал или уверенных показаний меньше MIN_CONFIDENT_FRAC (на
-        сэмплах — 91-100%; мало — значит, рамка не на светофоре: совмещение
-        ошиблось или светофор заменили). Тогда red_light/stop_line для видео
-        не выдаются, а congestion считается по длительности — лучше, чем
-        события по мусорному "цвету"."""
+        """Smoothed state series, or None if the light cannot be trusted:
+        the scanner failed or confident readings are below MIN_CONFIDENT_FRAC (on
+        the samples it is 91-100%; low means the box is not on the light: alignment
+        went wrong or the light was replaced). Then red_light/stop_line are not
+        emitted for the video, and congestion is computed from duration — better than
+        events based on a garbage "colour"."""
         if self.failed or not self.raw:
             return None
         seen = [s for _, s in self.raw if s != "unknown"]
         frac = len(seen) / max(len(self.raw) - self.n_occluded, 1)
         if frac < MIN_CONFIDENT_FRAC:
-            print(f"[light_state] светофор читается уверенно только в {frac:.0%} кадров — "
-                  f"не используется (red_light/stop_line для этого видео не выдаются)")
+            print(f"[light_state] traffic light read confidently in only {frac:.0%} of frames — "
+                  f"not used (no red_light/stop_line for this video)")
             return None
         return smooth_states(self.raw, confirm_frames)
 
 
 def run_light_state(video_path, zones, stride=3, min_pixels=MIN_BRIGHT_PIXELS,
                      confirm_frames=2):
-    """Отдельный проход по видео (только для CLI/отладки; в pipeline.extract
-    светофор читается внутри прохода трекера через LightScanner).
-    Возвращает список [t_sec, "red"|"yellow"|"green"|"unknown"]."""
+    """Separate pass over the video (CLI/debugging only; in pipeline.extract
+    the light is read inside the tracker pass via LightScanner).
+    Returns a list of [t_sec, "red"|"yellow"|"green"|"unknown"]."""
     scanner = LightScanner(zones, min_pixels=min_pixels)
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -249,8 +249,8 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--confirm-frames", type=int, default=2,
-                     help="сколько подряд уверенных (не unknown) сэмплов нового цвета "
-                          "нужно для переключения состояния (1 = сразу по первому же)")
+                     help="number of consecutive confident (not unknown) samples of a new colour "
+                          "needed to switch state (1 = on the very first one)")
     ap.add_argument("--min-pixels", type=int, default=MIN_BRIGHT_PIXELS)
     args = ap.parse_args()
 
@@ -271,13 +271,13 @@ def main():
     counts = {}
     for _, s in smoothed:
         counts[s] = counts.get(s, 0) + 1
-    print(f"{len(smoothed)} сэмплов -> {out_path}")
-    print("Распределение состояний:", counts)
+    print(f"{len(smoothed)} samples -> {out_path}")
+    print("State distribution:", counts)
     if counts.get("unknown", 0) == len(smoothed):
-        print("ВНИМАНИЕ: весь ролик 'unknown' — светофор ни разу не был уверенно "
-              "распознан, проверь ROI (light_roi) и/или --min-pixels")
+        print("WARNING: the whole clip is 'unknown' — the light was never confidently "
+              "recognised, check the ROI (light_roi) and/or --min-pixels")
     elif counts.get("red", 0) == 0:
-        print("ВНИМАНИЕ: 'red' ни разу не встретился — проверь ROI (light_roi) и/или --min-pixels")
+        print("WARNING: 'red' never occurred — check the ROI (light_roi) and/or --min-pixels")
 
 
 if __name__ == "__main__":

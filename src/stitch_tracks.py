@@ -1,23 +1,23 @@
-"""Сшивание обрывков треков после перекрытия (столб, другая машина и т.д.).
+"""Stitching track fragments after an occlusion (a pole, another car, etc.).
 
-Если трек A закончился рядом по месту и времени с началом трека B того же
-класса — считаем их одним объектом. Нужно, потому что даже с длинным
-буфером трекера полное перекрытие столбом на несколько секунд может дать
-новый track_id той же самой стоящей машине.
+If track A ended close in place and time to the start of track B of the same
+class, they are treated as one object. Needed because even with a long
+tracker buffer, a full occlusion by a pole for several seconds can give
+the very same stationary car a new track_id.
 
-Запуск:
+Run:
     python src/stitch_tracks.py --tracks src/tracks/C3896.json
 
-Добавляет каждому объекту поле "stitched_id" (int) — используй его вместо
-"track_id" в правилах, где важна непрерывная история объекта (stopped_vehicle
-и т.п.). Исходный "track_id" не трогается.
+Adds a "stitched_id" (int) field to every object — use it instead of
+"track_id" in rules where the object's continuous history matters (stopped_vehicle
+etc.). The original "track_id" is left untouched.
 """
 import argparse
 import json
 from pathlib import Path
 
-MAX_GAP_SEC = 5.0     # макс. разрыв по времени между концом A и началом B
-MAX_DIST_PX = 150.0   # макс. расстояние между центрами (в пикселях исходного разрешения)
+MAX_GAP_SEC = 5.0     # max time gap between the end of A and the start of B
+MAX_DIST_PX = 150.0   # max distance between centres (in pixels of the original resolution)
 
 
 def center(rec):
@@ -29,7 +29,7 @@ def dist(a, b):
 
 
 PERSON_CLS = 0
-SPLIT_ID_OFFSET = 10_000_000   # номера отделённых частей не пересекаются с номерами трекера
+SPLIT_ID_OFFSET = 10_000_000   # ids of split-off parts do not collide with tracker ids
 
 
 def _family(cls):
@@ -37,11 +37,11 @@ def _family(cls):
 
 
 def split_class_switches(records):
-    """ByteTrack в ultralytics не различает классы: пешеход, чью рамку накрыла
-    машина, может "передать" ей свой track_id (C3897, #829: человек до 301.9 с,
-    дальше тот же номер у машины — и машина стала "пешеходом на проезжей части").
-    Такой трек делится: записи преобладающего семейства (человек / транспорт)
-    сохраняют номер, остальные получают отдельный. Ставит r["obj_id"]."""
+    """ByteTrack in ultralytics is class-agnostic: a pedestrian whose box is covered
+    by a car may "hand over" its track_id to it (C3897, #829: a person until 301.9 s,
+    then the same id on a car — and the car became a "pedestrian on the roadway").
+    Such a track is split: records of the dominant family (person / vehicle)
+    keep the id, the rest get a separate one. Sets r["obj_id"]."""
     counts = {}
     for r in records:
         c = counts.setdefault(r["track_id"], {"person": 0, "vehicle": 0})
@@ -73,9 +73,9 @@ def build_track_summaries(records):
 
 
 def stitch(summaries):
-    """Жадно сшивает треки: сортируем по времени начала, для каждого
-    пытаемся найти лучший "предыдущий" трек того же класса, который
-    закончился незадолго до и рядом."""
+    """Greedily stitches tracks: sort by start time, and for each one
+    try to find the best "previous" track of the same class that
+    ended shortly before and nearby."""
     ordered = sorted(summaries.values(), key=lambda s: s["start_t"])
     parent = {s["track_id"]: s["track_id"] for s in ordered}  # union-find
 
@@ -85,7 +85,7 @@ def stitch(summaries):
             x = parent[x]
         return x
 
-    # кандидаты в "открытые хвосты" по классу: list of (end_t, end_c, track_id)
+    # "open tail" candidates per class: list of (end_t, end_c, track_id)
     open_tails = {}  # cls -> list of dict(end_t, end_c, root_id)
 
     for s in ordered:
@@ -95,7 +95,7 @@ def stitch(summaries):
         best_cost = None
         for tail in cands:
             gap = s["start_t"] - tail["end_t"]
-            if gap <= 0 or gap > MAX_GAP_SEC:   # 0 — оба объекта в одном кадре, это не продолжение
+            if gap <= 0 or gap > MAX_GAP_SEC:   # 0 — both objects are in the same frame, not a continuation
                 continue
             d = dist(tail["end_c"], s["start_c"])
             if d > MAX_DIST_PX:
@@ -118,9 +118,9 @@ def stitch(summaries):
 
 
 def stitch_records(records, max_gap_sec=MAX_GAP_SEC, max_dist_px=MAX_DIST_PX):
-    """Обёртка без файлового I/O: принимает records из track.run_tracker(),
-    возвращает те же records с добавленным полем 'stitched_id' на каждой
-    записи (мутирует список на месте и возвращает его же для удобства)."""
+    """Wrapper without file I/O: takes records from track.run_tracker(),
+    returns the same records with a 'stitched_id' field added to each
+    record (mutates the list in place and returns it for convenience)."""
     global MAX_GAP_SEC, MAX_DIST_PX
     prev_gap, prev_dist = MAX_GAP_SEC, MAX_DIST_PX
     MAX_GAP_SEC, MAX_DIST_PX = max_gap_sec, max_dist_px
@@ -138,8 +138,8 @@ def stitch_records(records, max_gap_sec=MAX_GAP_SEC, max_dist_px=MAX_DIST_PX):
 def main():
     global MAX_GAP_SEC, MAX_DIST_PX
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tracks", required=True, help="путь к JSON из track.py")
-    ap.add_argument("--out", default=None, help="куда писать (по умолчанию рядом, .stitched.json)")
+    ap.add_argument("--tracks", required=True, help="path to the JSON from track.py")
+    ap.add_argument("--out", default=None, help="output path (default: alongside, .stitched.json)")
     ap.add_argument("--max-gap-sec", type=float, default=MAX_GAP_SEC)
     ap.add_argument("--max-dist-px", type=float, default=MAX_DIST_PX)
     args = ap.parse_args()
@@ -161,13 +161,13 @@ def main():
 
     n_before = len(summaries)
     n_after = len(set(mapping.values()))
-    print(f"Треков было: {n_before}, после сшивки: {n_after} "
-          f"(объединено {n_before - n_after} обрывков)")
+    print(f"Tracks before: {n_before}, after stitching: {n_after} "
+          f"({n_before - n_after} fragments merged)")
 
     data["meta"]["stitch_max_gap_sec"] = MAX_GAP_SEC
     data["meta"]["stitch_max_dist_px"] = MAX_DIST_PX
     out_path.write_text(json.dumps(data, indent=1))
-    print(f"Сохранено: {out_path}")
+    print(f"Saved: {out_path}")
 
 
 if __name__ == "__main__":

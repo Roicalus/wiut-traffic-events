@@ -1,30 +1,30 @@
 """
-define_zones.py — кликами по одному кадру задаёт полигоны зон камеры
-(зона очереди перед светофором, зоны переходов, проезжая часть, ROI
-светофора и т.п.). Результат — zones.json, переиспользуемый для ВСЕХ
-видео этой камеры (сэмплы и скрытый тест — тот же ракурс).
+define_zones.py — define the camera's zone polygons by clicking on a single frame
+(the queue zone in front of the traffic light, crossing zones, the roadway, the traffic-light
+ROI, etc.). The result is zones.json, reused for ALL videos from this camera (the samples and
+the hidden test share the same view).
 
-Запуск:
+Usage:
     python define_zones.py --video samples/C3896.MP4 --frame 150 --out zones.json
 
-Управление:
-    ЛКМ     — добавить точку к текущему полигону
-    ПКМ     — замкнуть текущий полигон (нужно >=3 точки; для линии 7
-              (solid_line) не нужна — она не замыкается, просто 2 точки)
-    1..8    — присвоить только что замкнутому полигону имя из списка ниже
-              (после этого можно сразу начинать следующий полигон);
-              7 (solid_line) — особый случай: это ЛИНИЯ (ровно 2 точки),
-              не полигон, см. src/rules.py detect_solid_line_crossing
-    0       — присвоить произвольное имя (единственный случай, когда
-              спросит в консоли — используйте только для нестандартных зон)
-    U       — отменить последнюю точку текущего полигона
-    Z       — удалить последнюю сохранённую (уже названную) зону
-    Q       — закончить и сохранить всё в --out
+Controls:
+    LMB     — add a point to the current polygon
+    RMB     — close the current polygon (needs >=3 points; not needed for line 7
+              (solid_line) — it is not closed, just 2 points)
+    1..8    — assign a name from the list below to the polygon just closed
+              (after that you can start the next polygon right away);
+              7 (solid_line) is a special case: it is a LINE (exactly 2 points),
+              not a polygon, see src/rules.py detect_solid_line_crossing
+    0       — assign a custom name (the only case where it asks in the
+              console — use only for non-standard zones)
+    U / Ctrl+Z — undo: the last point of the current polygon, or the last
+              saved zone if the current polygon is empty (its points come back)
+    Q       — finish and save everything to --out
 
-Координаты кликов сохраняются в ИСХОДНОМ разрешении видео, даже если
-картинка на экране показана уменьшенной (см. --max-width/--max-height) —
-zones.json остаётся валиден для track.py/rules.py, которые работают с
-полноразмерными кадрами.
+Click coordinates are stored in the ORIGINAL video resolution, even if the
+image is shown scaled down on screen (see --max-width/--max-height) —
+zones.json stays valid for track.py/rules.py, which work on
+full-size frames.
 """
 import argparse
 import json
@@ -37,20 +37,20 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 PRESET_NAMES = {
-    ord('1'): "queue_zone",     # очередь по всем полосам перед переходом — для congestion
-    ord('2'): "roadway",        # проезжая часть вне переходов — для jaywalking
-    ord('3'): "stop_line",      # линия стоп перед дальним переходом
-    ord('4'): "crossing_far",   # переход через магистраль
-    ord('5'): "crossing_near",  # диагональный переход по площади
-    ord('6'): "light_roi",      # рамка на сигнале светофора — для определения цвета
-    ord('7'): "solid_line",     # ЛИНИЯ (ровно 2 точки!) — для solid_line_crossing
-    ord('8'): "illegal_turn_exit",  # выезд, куда нельзя попасть с магистрали (см. rules.detect_illegal_turn)
+    ord('1'): "queue_zone",     # queue across all lanes in front of the crossing — for congestion
+    ord('2'): "roadway",        # roadway outside the crossings — for jaywalking
+    ord('3'): "stop_line",      # stop line in front of the far crossing
+    ord('4'): "crossing_far",   # crossing over the main road
+    ord('5'): "crossing_near",  # diagonal crossing across the square
+    ord('6'): "light_roi",      # box around the traffic-light signal — for colour detection
+    ord('7'): "solid_line",     # LINE (exactly 2 points!) — for solid_line_crossing
+    ord('8'): "illegal_turn_exit",  # exit that cannot be reached from the main road (see rules.detect_illegal_turn)
 }
 
-# зоны-ЛИНИИ: не полигон, а открытый отрезок — достаточно 2 точек, право-
-# кликом замыкать не нужно (см. LINE_MIN_POINTS ниже и src/rules.py,
-# detect_solid_line_crossing — там же объяснено, зачем это именно линия,
-# а не полигон: cv2.pointPolygonTest не умеет "по какую сторону от прямой").
+# LINE zones: not a polygon but an open segment — 2 points are enough, no need to
+# close with a right-click (see LINE_MIN_POINTS below and src/rules.py,
+# detect_solid_line_crossing — it also explains why this is a line
+# and not a polygon: cv2.pointPolygonTest cannot tell "which side of a line").
 LINE_PRESETS = {"solid_line"}
 
 
@@ -68,66 +68,66 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
     ap.add_argument("--frame", type=int, default=150,
-                     help="номер кадра для разметки (лучше кадр с трафиком)")
+                     help="frame number to annotate (a frame with traffic is better)")
     ap.add_argument("--out", default="zones.json")
     ap.add_argument("--load", action="store_true",
-                     help="загрузить существующий --out и дорисовать/заменить зоны (зона с тем же "
-                          "именем перезаписывается). Рисуйте на ТОМ ЖЕ видео/кадре, что в zones_ref.json")
+                     help="load the existing --out and add/replace zones (a zone with the same "
+                          "name is overwritten). Draw on the SAME video/frame as in zones_ref.json")
     ap.add_argument("--max-width", type=int, default=1600,
-                     help="макс. ширина окна на экране (картинка масштабируется под неё)")
+                     help="max. on-screen window width (the image is scaled to fit it)")
     ap.add_argument("--max-height", type=int, default=900,
-                     help="макс. высота окна на экране")
+                     help="max. on-screen window height")
     args = ap.parse_args()
 
     cap = cv2.VideoCapture(args.video)
     if not cap.isOpened():
-        raise SystemExit(f"Не удалось открыть видео: {args.video}")
+        raise SystemExit(f"Could not open video: {args.video}")
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if args.frame >= n_frames:
         cap.release()
-        raise SystemExit(f"Кадр {args.frame} за пределами видео (всего кадров: {n_frames})")
+        raise SystemExit(f"Frame {args.frame} is beyond the end of the video (total frames: {n_frames})")
     cap.set(cv2.CAP_PROP_POS_FRAMES, args.frame)
     ok, frame = cap.read()
     cap.release()
     if not ok:
-        raise SystemExit(f"Не удалось прочитать кадр {args.frame} из {args.video}")
+        raise SystemExit(f"Could not read frame {args.frame} from {args.video}")
 
     h, w = frame.shape[:2]
     scale = fit_scale(w, h, args.max_width, args.max_height)
-    print(f"Кадр {w}x{h}, масштаб показа: {scale:.3f} "
-          f"(координаты в zones.json будут в исходном разрешении {w}x{h})")
+    print(f"Frame {w}x{h}, display scale: {scale:.3f} "
+          f"(coordinates in zones.json will be in the original resolution {w}x{h})")
     disp_w, disp_h = int(w * scale), int(h * scale)
 
-    zones = {}          # name -> polygon в ИСХОДНЫХ координатах видео
+    zones = {}          # name -> polygon in ORIGINAL video coordinates
     if args.load and Path(args.out).exists():
         zones = json.loads(Path(args.out).read_text())
-        print(f"Загружено {len(zones)} зон из {args.out}: {list(zones)}")
+        print(f"Loaded {len(zones)} zones from {args.out}: {list(zones)}")
         ref_meta = Path(__file__).resolve().parent.parent / "zones_ref.json"
         if ref_meta.exists():
             m = json.loads(ref_meta.read_text())
             if (m.get("video"), m.get("frame")) != (Path(args.video).name, args.frame):
-                print(f"ВНИМАНИЕ: опорный кадр зон — {m.get('video')} кадр {m.get('frame')}, а вы "
-                      f"рисуете на {Path(args.video).name} кадр {args.frame}. Камера между видео "
-                      f"сдвинута — рисуйте на опорном, иначе новые зоны не совпадут со старыми.")
-    current = []         # текущий незамкнутый полигон, тоже в исходных координатах
-    history = []         # стек действий для отмены: ('point',) | ('zone', name, polygon)
-    status = "Кликай ЛКМ точки полигона, ПКМ — замкнуть"
+                print(f"WARNING: the zones' reference frame is {m.get('video')} frame {m.get('frame')}, but you "
+                      f"are drawing on {Path(args.video).name} frame {args.frame}. The camera is shifted "
+                      f"between videos — draw on the reference, or the new zones will not match the old ones.")
+    current = []         # current unclosed polygon, also in original coordinates
+    history = []         # action stack for undo: ('point',) | ('zone', name, polygon)
+    status = "LMB: click polygon points, RMB: close"
 
     def undo():
         nonlocal current, status
         if not history:
-            status = "Отменять нечего"
+            status = "Nothing to undo"
             return
         action = history.pop()
         if action[0] == "point":
             if current:
                 current.pop()
-            status = "Отменена последняя точка"
+            status = "Last point undone"
         elif action[0] == "zone":
             _, name, poly = action
             zones.pop(name, None)
-            current = poly  # точки возвращаются в работу — можно перерисовать/переназвать
-            status = f"Отменена зона '{name}' — точки снова в работе, назначь имя заново"
+            current = poly  # the points go back into work — can be redrawn/renamed
+            status = f"Zone '{name}' undone — points are back in work, assign the name again"
 
     def redraw():
         vis = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
@@ -148,22 +148,22 @@ def main():
                               "7": "solid_line(2pt)", "8": "illegal_turn_exit"}.items())
         cv2.putText(vis, status, (10, disp_h - 40), cv2.FONT_HERSHEY_SIMPLEX,
                     0.55, (255, 255, 0), 1)
-        cv2.putText(vis, legend + "  |  U/Ctrl+Z: отменить", (10, disp_h - 15),
+        cv2.putText(vis, legend + "  |  U/Ctrl+Z: undo", (10, disp_h - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         cv2.imshow("define_zones", vis)
 
     def on_mouse(event, x, y, flags, param):
         nonlocal status
         if event == cv2.EVENT_LBUTTONDOWN:
-            # экранные координаты -> исходное разрешение видео
+            # screen coordinates -> original video resolution
             current.append([x / scale, y / scale])
             history.append(("point",))
             redraw()
         elif event == cv2.EVENT_RBUTTONDOWN:
             if len(current) < 3:
-                status = "Нужно минимум 3 точки, чтобы замкнуть полигон (для линии 7 — не нужно, жми 7 сразу после 2 точек)"
+                status = "At least 3 points are needed to close a polygon (not for line 7 — press 7 right after 2 points)"
             else:
-                status = "Полигон замкнут — нажми 1-8 (готовое имя) или 0 (своё)"
+                status = "Polygon closed — press 1-8 (preset name) or 0 (custom)"
             redraw()
 
     cv2.namedWindow("define_zones", cv2.WINDOW_NORMAL)
@@ -175,24 +175,24 @@ def main():
         redraw()
         key = cv2.waitKey(20) & 0xFF
 
-        if key in (ord('u'), 26):  # 'u' или Ctrl+Z
+        if key in (ord('u'), 26):  # 'u' or Ctrl+Z
             undo()
         elif key in PRESET_NAMES and len(current) >= _min_points_for(PRESET_NAMES[key]):
             name = PRESET_NAMES[key]
             zones[name] = current
             history.append(("zone", name, current))
             current = []
-            status = f"Сохранено: {name} — рисуй следующий полигон"
+            status = f"Saved: {name} — draw the next polygon"
         elif key == ord('0') and len(current) >= 2:
-            cv2.destroyWindow("define_zones")  # чтобы консольный input() точно был в фокусе
-            name = input("Своё имя зоны: ").strip()
+            cv2.destroyWindow("define_zones")  # so the console input() is definitely in focus
+            name = input("Custom zone name: ").strip()
             cv2.namedWindow("define_zones", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("define_zones", disp_w, disp_h)
             cv2.setMouseCallback("define_zones", on_mouse)
             if name:
                 zones[name] = current
                 history.append(("zone", name, current))
-                status = f"Сохранено: {name}"
+                status = f"Saved: {name}"
             current = []
         elif key == ord('q'):
             break
@@ -200,13 +200,13 @@ def main():
     cv2.destroyAllWindows()
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(zones, f, ensure_ascii=False, indent=2)
-    print(f"Сохранено {len(zones)} зон(ы) в {args.out}: {list(zones.keys())}")
+    print(f"Saved {len(zones)} zone(s) to {args.out}: {list(zones.keys())}")
     try:
         from src import align
         align.save_reference(frame, Path(args.video).name, args.frame)
-        print(f"Опорный кадр для совмещения зон: {align.REF_IMAGE} (закоммитьте его вместе с zones.json)")
+        print(f"Reference frame for zone alignment: {align.REF_IMAGE} (commit it together with zones.json)")
     except Exception as exc:
-        print(f"Опорный кадр не сохранён: {exc}")
+        print(f"Reference frame not saved: {exc}")
 
 
 if __name__ == "__main__":

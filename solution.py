@@ -1,16 +1,16 @@
 """
-solution.py — интерфейс хакатона. Тонкая обёртка: вся логика в src/.
+solution.py — the hackathon interface. A thin wrapper: all logic lives in src/.
 
   Part A  detect_events(video_path)
-          src/pipeline.py: ОДИН проход по видео (YOLO11s + ByteTrack, в том же
-          проходе — светофор и obstacle/fire), затем правила на треках
-          (src/rules.py) и постпроцессинг сегментов (src/postprocess.py).
-  Part B  RiskEstimator  (src/risk.py): свой каузальный проход YOLO11n,
-          точка наибольшего сближения + требуемое замедление для пар,
-          сам следит за бюджетом времени.
+          src/pipeline.py: ONE pass over the video (YOLO11s + ByteTrack; the traffic light
+          and obstacle/fire are handled in the same pass), then rules on the tracks
+          (src/rules.py) and segment post-processing (src/postprocess.py).
+  Part B  RiskEstimator  (src/risk.py): its own causal YOLO11n pass,
+          closest point of approach + required deceleration for pairs,
+          and it watches the time budget itself.
 
-Нужны: zones.json и zones_ref.jpg/.json рядом с этим файлом, weights/yolo11s.pt
-и weights/yolo11n.pt (есть в репозитории; иначе bash weights/download.sh).
+Requires: zones.json and zones_ref.jpg/.json next to this file, weights/yolo11s.pt
+and weights/yolo11n.pt (included in the repository; otherwise bash weights/download.sh).
 """
 from __future__ import annotations
 
@@ -19,59 +19,60 @@ import random
 import sys
 from pathlib import Path
 
-os.environ.setdefault("YOLO_OFFLINE", "1")         # без сетевых проверок ultralytics
+os.environ.setdefault("YOLO_OFFLINE", "1")         # no ultralytics network checks
 os.environ.setdefault("YOLO_VERBOSE", "False")
-# cuBLAS выбирает рабочую память и ядра по состоянию GPU: без фиксированной
-# workspace результат fp16-сверток может отличаться между прогонами (до импорта torch).
+# cuBLAS picks workspace memory and kernels based on GPU state: without a fixed
+# workspace, fp16 convolution results may differ between runs (must be set before importing torch).
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-# Логи по-русски: на машине с не-UTF-8 консолью print() бросил бы
-# UnicodeEncodeError внутри detect_events, и видео засчиталось бы пустым.
+# Logs are English now, but paths and exception texts may still contain non-ASCII: on a machine with
+# a non-UTF-8 console, print() would raise UnicodeEncodeError inside detect_events and the video
+# would be scored as empty.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(errors="replace")
     except (AttributeError, ValueError):
         pass
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # src/ импортируется из любого cwd
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # src/ is importable from any cwd
 
 import numpy as np  # noqa: E402
 
 from src import budget  # noqa: E402
-from src.risk import RiskEstimator  # noqa: E402,F401  (харнесс ищет это имя здесь)
+from src.risk import RiskEstimator  # noqa: E402,F401  (the harness looks for this name here)
 
 random.seed(0)
 np.random.seed(0)
 try:
     import torch
     torch.manual_seed(0)
-    torch.backends.cudnn.benchmark = False      # подбор ядер cuDNN недетерминирован
+    torch.backends.cudnn.benchmark = False      # cuDNN kernel autotuning is non-deterministic
     torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(True, warn_only=True)  # где нет детерминированного ядра — предупреждение, не ошибка
+    torch.use_deterministic_algorithms(True, warn_only=True)  # no deterministic kernel -> warning, not error
 except ImportError:
     pass
 
-# Классы, которые мы РЕАЛЬНО отправляем. Правило метрики: класс, который мы
-# предсказали, а в тесте его нет, добавляется в среднее с F1 = 0. Поэтому
-# класс включается, только если на своей разметке сэмплов у него приличный
-# F1, а если в сэмплах его нет — если он там почти не срабатывает ("тест
-# тишины", tools/dev_loop.py печатает счётчики по всем классам).
+# Classes we ACTUALLY submit. Metric rule: a class we predicted that is absent
+# from the test set is added to the mean with F1 = 0. So a class is enabled only
+# if it has a decent F1 on our own labels of the samples, or, if the samples have
+# none of it, if it almost never fires there ("silence test",
+# tools/dev_loop.py prints counters for all classes).
 CORE_CLASSES = ["congestion", "stopped_vehicle", "jaywalking", "red_light", "stop_line",
                 "illegal_turn"]
-# Правила есть и считаются, но наружу не идут, пока не пройдут проверку.
+# The rules exist and are computed, but are not submitted until they pass validation.
 EXPERIMENTAL_CLASSES = ["wrong_way", "illegal_u_turn", "failure_to_yield",
                         "solid_line_crossing", "accident", "near_miss",
                         "road_obstacle", "fire_smoke"]
 
 CLASSES: list[str] = list(CORE_CLASSES)
-# Считаются и показываются в визуализации, но не отправляются: официального
-# класса нет (заезд на тротуарный островок), а свои id добавлять нельзя.
+# Computed and shown in the visualization, but not submitted: there is no official
+# class for it (mounting a curb island), and adding our own ids is not allowed.
 DIAGNOSTIC_CLASSES = ["curb_mount"]
 
 from src import pipeline  # noqa: E402
 
 try:
-    pipeline.warm_up()          # вне бюджета видео: харнесс импортирует решение до секундомера
-except Exception as _exc:      # noqa: BLE001 — без прогрева всё равно работает, только медленнее
-    print(f"WARNING: прогрев моделей не удался: {_exc!r}")
+    pipeline.warm_up()          # outside the video budget: the harness imports the solution before the stopwatch
+except Exception as _exc:      # noqa: BLE001 — works without warm-up too, just slower
+    print(f"WARNING: model warm-up failed: {_exc!r}")
 
 
 def detect_events(video_path: str) -> list[list]:

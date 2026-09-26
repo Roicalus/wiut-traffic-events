@@ -1,13 +1,13 @@
-"""render.py — видео с разметкой поверх результата пайплайна.
+"""render.py — video with the pipeline results drawn on top.
 
-Одна реализация для tools/visualize_debug.py (сэмплы, из кэша) и для
-живого демо (src/analyze.py): зоны, боксы трекера, объект-нарушитель
-(толстая рамка цвета нарушения), состояние светофора, плашка активных
-событий, полоса риска Part B, пара объектов, дающая риск, и панель под
-кадром — таймлайн всех событий по классам, кривая риска, бегунок.
+One implementation for tools/visualize_debug.py (samples, from the cache) and for
+the live demo (src/analyze.py): zones, tracker boxes, the violating object
+(thick frame in the violation's colour), traffic light state, a banner of active
+events, the Part B risk bar, the object pair causing the risk, and a panel below
+the frame — a timeline of all events by class, the risk curve, a playhead.
 
-Видео пишется в H.264 (imageio-ffmpeg, играет в браузере и любом плеере),
-если его нет — в mp4v через OpenCV.
+The video is written as H.264 (imageio-ffmpeg, plays in a browser and any player);
+if that is unavailable, as mp4v via OpenCV.
 """
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ import numpy as np
 
 from src.rules import PERSON_CLASS, LightState
 
-# Цвета по классам событий (BGR) — стабильные, чтобы глаз привыкал
+# Colours per event class (BGR) — stable, so the eye gets used to them
 EVENT_COLORS = {
-    "congestion": (0, 165, 255),        # оранжевый
-    "stopped_vehicle": (0, 0, 255),     # красный
-    "jaywalking": (255, 0, 255),        # пурпурный
-    "red_light": (0, 0, 139),           # тёмно-красный
-    "stop_line": (255, 255, 0),         # голубой
+    "congestion": (0, 165, 255),        # orange
+    "stopped_vehicle": (0, 0, 255),     # red
+    "jaywalking": (255, 0, 255),        # magenta
+    "red_light": (0, 0, 139),           # dark red
+    "stop_line": (255, 255, 0),         # cyan
     "accident": (0, 0, 200),
     "near_miss": (80, 80, 255),
     "wrong_way": (0, 100, 255),
@@ -35,11 +35,11 @@ EVENT_COLORS = {
     "solid_line_crossing": (0, 215, 255),
     "road_obstacle": (42, 42, 165),
     "fire_smoke": (0, 69, 255),
-    "curb_mount": (0, 128, 128),      # диагностика: заезд на островок
+    "curb_mount": (0, 128, 128),      # diagnostic: mounting a curb island
 }
 
 
-# порядок важности: цвет рамки объекта с несколькими нарушениями — по первому
+# priority order: an object with several violations gets the frame colour of the first one
 VIOLATION_PRIORITY = ["accident", "near_miss", "red_light", "wrong_way", "illegal_u_turn",
                       "illegal_turn", "failure_to_yield", "stopped_vehicle", "stop_line",
                       "solid_line_crossing", "jaywalking", "congestion", "road_obstacle", "fire_smoke",
@@ -54,7 +54,7 @@ LIGHT_COLORS = {"red": (0, 0, 255), "yellow": (0, 220, 220),
 
 
 def draw_zones(frame, zones, scale):
-    # только контуры: зоны покрывают почти весь кадр, заливка его зеленит
+    # outlines only: zones cover almost the whole frame, a fill would tint it green
     for name, poly in zones.items():
         pts = (np.array(poly, dtype=np.float32) * scale).astype(int)
         cv2.polylines(frame, [pts], True, ZONE_COLOR, 1, cv2.LINE_AA)
@@ -63,9 +63,9 @@ def draw_zones(frame, zones, scale):
 
 
 def draw_boxes(frame, recs_at_frame, scale, active_violators=None):
-    """active_violators: dict stitched_id -> [нарушения, активные ПРЯМО СЕЙЧАС
-    у этого объекта] (из compute_events_debug), самое важное первым — такой
-    бокс рисуется толстой рамкой его цвета со всеми именами."""
+    """active_violators: dict stitched_id -> [violations active RIGHT NOW
+    for this object] (from compute_events_debug), most important first — such a
+    box is drawn with a thick frame in its colour with all the names."""
     active_violators = active_violators or {}
     for r in recs_at_frame:
         x1, y1, x2, y2 = (int(r["x1"] * scale), int(r["y1"] * scale),
@@ -107,13 +107,13 @@ def draw_light(frame, zones, scale, state):
 
 
 def draw_events(frame, w, h, active, recent):
-    # верхняя плашка с активными сейчас событиями
+    # top banner with the currently active events
     if active:
         text = " | ".join(f"{lbl}" for lbl in active)
         cv2.rectangle(frame, (0, 0), (w, 30), (0, 0, 0), -1)
         cv2.putText(frame, "ACTIVE: " + text, (8, 21), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (0, 255, 255), 2, cv2.LINE_AA)
-    # тикер последних событий слева снизу
+    # ticker of recent events at the bottom left
     for i, (s, e, lbl) in enumerate(recent[-6:]):
         color = EVENT_COLORS.get(lbl, (200, 200, 200))
         cv2.putText(frame, f"[{s:.1f}-{e:.1f}] {lbl}", (8, h - 15 - 20 * i),
@@ -137,8 +137,8 @@ def draw_risk(frame, w, risk_curve, idx_ptr, t_sec):
 
 
 def build_panel(events, risk_curve, duration, width):
-    """Статичная часть панели под кадром: строка на каждый класс из events
-    плюс строка риска. Бегунок дорисовывается на каждом кадре."""
+    """Static part of the panel below the frame: one row per class in events
+    plus a risk row. The playhead is drawn on top on every frame."""
     classes = sorted({e[2] for e in events})
     rows = classes + (["risk"] if risk_curve else [])
     h = PANEL_ROW_H * max(len(rows), 1) + 8
@@ -179,7 +179,7 @@ def draw_risk_pair(frame, scale, explain, score):
 
 
 class VideoSink:
-    """Запись кадров BGR: H.264 через ffmpeg из imageio-ffmpeg, иначе mp4v."""
+    """Writes BGR frames: H.264 via ffmpeg from imageio-ffmpeg, otherwise mp4v."""
 
     def __init__(self, path, fps, size):
         self.path, (w, h) = Path(path), size
@@ -213,13 +213,13 @@ class VideoSink:
 def render(video_path, out_path, zones, records, light_samples, events, risk_curve,
            debug_events, stride, explains=None, max_width=1280, start=0.0, end=None,
            progress=None):
-    """Пишет видео с разметкой.
+    """Writes the annotated video.
 
-    zones, records — в пикселях этого видео; events — [s, e, label] для
-    таймлайна; debug_events — [s, e, label, object_id] (подсветка боксов,
-    compute_events_debug); explains — [(t, score, пара риска)] из RiskScorer;
-    stride — писать каждый stride-й кадр (как у трекера, чтобы у всех кадров
-    были боксы). progress(frac) — необязательный колбэк."""
+    zones, records — in this video's pixels; events — [s, e, label] for the
+    timeline; debug_events — [s, e, label, object_id] (box highlighting,
+    compute_events_debug); explains — [(t, score, risk pair)] from RiskScorer;
+    stride — write every stride-th frame (same as the tracker, so every frame
+    has boxes). progress(frac) — optional callback."""
     zones_np = {n: np.asarray(z, np.float32) for n, z in zones.items()}
     zones_list = {n: z.tolist() for n, z in zones_np.items()}
     light = LightState(light_samples) if light_samples is not None else LightState([])
@@ -234,7 +234,7 @@ def render(video_path, out_path, zones, records, light_samples, events, risk_cur
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = n_frames / fps if fps else 1.0
     scale = min(max_width / w, 1.0)
-    out_w, out_h = int(w * scale) // 2 * 2, int(h * scale) // 2 * 2    # H.264: чётные размеры
+    out_w, out_h = int(w * scale) // 2 * 2, int(h * scale) // 2 * 2    # H.264: even dimensions
     panel, x_of = build_panel(events_sorted, risk_curve, duration, out_w)
     panel_h = panel.shape[0] // 2 * 2
     panel = panel[:panel_h]
@@ -264,7 +264,7 @@ def render(video_path, out_path, zones, records, light_samples, events, risk_cur
             active_violators = {oid: sorted(set(lbls), key=VIOLATION_PRIORITY.index)
                                 for oid, lbls in active_violators.items()}
             recs_now = by_frame.get(frame_idx, [])
-            if congestion_active_now(t_sec, debug_events):   # затор — про кластер, подсвечиваем очередь
+            if congestion_active_now(t_sec, debug_events):   # congestion is about a cluster: highlight the queue
                 for r in recs_now:
                     sid = r.get("stitched_id", r["track_id"])
                     if sid not in active_violators and in_queue_zone(r, zones_np):
