@@ -140,6 +140,10 @@ installed at run time).
   up to 93 % but fire 15–43 times on the 18 min of samples (a dense queue looks
   like a crash in image space), so the conservative setting is kept: with rare
   accidents, false alarms cost more alarm-F1 than the extra hits bring.
+  Metric ground-plane distances would separate a queue from a crash; a single-view
+  calibration from the sample frame does not hold (the road curves, the junction is
+  skewed: lane-line vanishing points disagree by hundreds of pixels), so it needs
+  surveyed points on the asphalt.
 * **Speed.** Decoding 4K H.264 on the CPU is the main cost (≈0.7× video duration
   per pass, and there are two passes: ours in Part A and the harness's in Part B).
   Both parts overlap decoding with GPU inference: Part A reads frames in a
