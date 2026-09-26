@@ -122,7 +122,8 @@ installed at run time).
   v_c²/(2·gap) above 1–3 diagonals/s²). The first version used closest approach
   alone and scored ≥ 0.5 on 57–71 % of all sample frames: a car rolling up to a
   stopped queue is "about to collide" at constant velocity. Now 0.1 % of frames,
-  2 alarms in 18 min of samples (`tools/risk_replay.py score`). A capped
+  2 alarms in 18 min of samples (`tools/risk_replay.py score`); in the harness run
+  that wrote `predictions_samples.json` no frame reaches 0.5 (peak 0.498). A capped
   sub-threshold term (≤ 0.3) for any collision course ranks the 1–5 s before
   contact higher for AP without creating alarms. Synthetic scenarios
   (`tests/test_risk.py`: T-bone, rear-end, pedestrian; queue braking, parallel

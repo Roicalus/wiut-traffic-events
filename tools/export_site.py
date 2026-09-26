@@ -17,6 +17,7 @@ predictions_samples.json (сабмит), кэш прохода Part A (tools/dev
   media/examples/*.mp4            клипы-примеры классов
   media/failures/*.jpg            кадры неудачных случаев
   media/heatmaps, trajectories, eda/*.png
+  media/hero.jpg, data/hero.json  опорный кадр и детекции на нём для главной
 """
 from __future__ import annotations
 
@@ -60,13 +61,11 @@ EXAMPLES = [
 
 # Неудачные и спорные случаи — честно, с объяснением.
 FAILURES = [
-    ("Risk alarm without danger: pedestrian on the island", "C3902.MP4", 33.6,
-     "Part B raised an alarm (risk 0.57) for a pedestrian standing on the traffic island while a car passed. "
-     "Distances are measured in image space, and perspective squeezes the gap between the island and the "
-     "lane; a ground-plane (bird's-eye) projection would remove it."),
-    ("Risk alarm without danger: bus next to a car", "C3902.MP4", 216.2,
-     "A bus and a car in adjacent lanes: the bus box is huge, so the pair distance normalised by box size "
-     "looks like a contact. Same fix: metric distances on the ground plane."),
+    ("Close following read as a near conflict", "C3897.MP4", 183.1,
+     "Two cars in the far lane, one closing in on the other in slow traffic. The submitted risk curve peaks "
+     "at 0.498 here, a hair below the 0.5 alarm line, although nothing dangerous happens. Distances are "
+     "measured in image space: on the far side of the junction perspective squeezes a normal following gap "
+     "into a few pixels. A ground-plane (bird's-eye) projection with metric gaps is the fix we would try."),
     ("Jaywalking or a desire line?", "C3897.MP4", 150.0,
      "Almost every pedestrian phase, people step off the far zebra and cut diagonally across the asphalt to "
      "the near crossing. By the definition it is jaywalking and we report it; if the annotators treat this "
@@ -242,6 +241,22 @@ def alignment_figure(videos, out):
     cv2.imwrite(str(out), grid, [cv2.IMWRITE_JPEG_QUALITY, 88])
 
 
+def hero_frame(pub):
+    """Главная сайта: чистый опорный кадр камеры и детекции YOLO11s на нём (без правил и зон)."""
+    from ultralytics import YOLO
+    frame = cv2.imread(str(ROOT / "zones_ref.jpg"))
+    h, w = frame.shape[:2]
+    small = cv2.resize(frame, (1600, int(h * 1600 / w)), interpolation=cv2.INTER_AREA)
+    cv2.imwrite(str(pub / "media" / "hero.jpg"), small, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    names = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+    res = YOLO(str(ROOT / "weights" / "yolo11s.pt"))(frame, imgsz=1280, conf=0.4, classes=list(names), verbose=False)[0]
+    boxes = [{"cls": names[int(c)], "conf": round(float(p), 2),
+              "box": [round(float(x1) / w, 4), round(float(y1) / h, 4), round(float(x2) / w, 4), round(float(y2) / h, 4)]}
+             for (x1, y1, x2, y2), c, p in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(), res.boxes.conf.tolist())]
+    (pub / "data" / "hero.json").write_text(json.dumps({"image": "media/hero.jpg", "model": "YOLO11s, imgsz 1280, conf 0.4",
+                                                        "detections": boxes}, indent=1), encoding="utf-8")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", required=True, help="папка сайта (public/ внутри)")
@@ -252,6 +267,7 @@ def main():
     for d in ("data", "media/annotated", "media/examples", "media/failures", "media/heatmaps",
               "media/trajectories", "media/eda", "media/posters"):
         (pub / d).mkdir(parents=True, exist_ok=True)
+    hero_frame(pub)
     preds = json.loads((ROOT / "predictions_samples.json").read_text(encoding="utf-8"))
     shutil.copy2(ROOT / "predictions_samples.json", pub / "data" / "predictions_samples.json")
     videos = sorted(p for p in Path(args.videos).iterdir() if p.suffix.lower() == ".mp4")
