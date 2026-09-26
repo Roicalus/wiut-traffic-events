@@ -40975,11 +40975,6 @@
      "jaywalking"
     ],
     [
-     234.43,
-     235.44,
-     "jaywalking"
-    ],
-    [
      238.44,
      245.85,
      "jaywalking"
@@ -40987,11 +40982,6 @@
     [
      265.37,
      268.67,
-     "jaywalking"
-    ],
-    [
-     279.78,
-     283.18,
      "jaywalking"
     ],
     [
@@ -79132,7 +79122,7 @@
     ],
     [
      47.95,
-     52.75,
+     50.55,
      "jaywalking"
     ],
     [
@@ -117322,11 +117312,6 @@
      "jaywalking"
     ],
     [
-     36.64,
-     39.44,
-     "jaywalking"
-    ],
-    [
      53.55,
      55.66,
      "jaywalking"
@@ -132656,33 +132641,33 @@
    "duration": 340.34,
    "budget_sec": 1021.0,
    "errors": [],
-   "part_a_sec": 253.5,
-   "part_b_sec": 349.4,
-   "total_sec": 602.9
+   "part_a_sec": 267.7,
+   "part_b_sec": 301.5,
+   "total_sec": 569.2
   },
   "C3897.MP4": {
    "duration": 317.82,
    "budget_sec": 953.5,
    "errors": [],
-   "part_a_sec": 232.6,
-   "part_b_sec": 320.0,
-   "total_sec": 552.6
+   "part_a_sec": 203.1,
+   "part_b_sec": 278.3,
+   "total_sec": 481.4
   },
   "C3902.MP4": {
    "duration": 317.82,
    "budget_sec": 953.5,
    "errors": [],
-   "part_a_sec": 245.7,
-   "part_b_sec": 314.1,
-   "total_sec": 559.8
+   "part_a_sec": 210.7,
+   "part_b_sec": 278.5,
+   "total_sec": 489.1
   },
   "C3905.MP4": {
    "duration": 127.63,
    "budget_sec": 382.9,
    "errors": [],
-   "part_a_sec": 92.4,
-   "part_b_sec": 97.0,
-   "total_sec": 189.4
+   "part_a_sec": 78.6,
+   "part_b_sec": 98.1,
+   "total_sec": 176.7
   }
  }
 }
