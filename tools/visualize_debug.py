@@ -29,8 +29,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import solution  # noqa: E402
-from src import render, risk  # noqa: E402
-from src.pipeline import extract, infer, load_obs, reference_view  # noqa: E402
+from src import align, render, risk  # noqa: E402
+from src.pipeline import extract, get_zones, infer, load_obs, reference_view  # noqa: E402
 from src.rules import compute_events_debug  # noqa: E402
 
 
@@ -76,6 +76,9 @@ def main():
     cache = ROOT / "cache" / f"{video_path.name}.obs.pkl.gz"
     if cache.exists() and not args.no_cache:
         obs = load_obs(cache)
+        # треки в кэше не зависят от зон, а зоны могли поменяться после записи кэша
+        # (новая зона в zones.json) — совмещаем текущие с этим роликом, как extract()
+        obs.zones, obs.extra["align"] = align.aligned_zones(video_path, get_zones())
         print(f"Кэш наблюдений: {cache}; зоны: {obs.extra.get('align')}")
     else:
         print("Кэша нет — считаю проход Part A (медленно)...")
