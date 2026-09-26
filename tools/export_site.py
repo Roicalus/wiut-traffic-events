@@ -17,7 +17,7 @@ predictions_samples.json (сабмит), кэш прохода Part A (tools/dev
   media/examples/*.mp4            клипы-примеры классов
   media/failures/*.jpg            кадры неудачных случаев
   media/heatmaps, trajectories, eda/*.png
-  media/hero.jpg, data/hero.json  опорный кадр и детекции на нём для главной
+  media/hero.mp4, data/hero.json  фрагмент C3896 без разметки и наши треки на нём (главная)
 """
 from __future__ import annotations
 
@@ -41,6 +41,7 @@ from src.rules import VEHICLE_CLASSES, annotate, group_by_object  # noqa: E402
 
 WEB_WIDTH = 960
 POSTER_AT_SEC = 20.0          # кадр-превью размеченного ролика
+HERO = ("C3896.MP4", 44.0, 84.0)  # фрагмент для главной: разворот, остановка, проезд на красный
 BIN_SEC = 5.0
 LIGHTING = {"C3896": "day, direct sun", "C3897": "day, direct sun", "C3902": "sunset", "C3905": "dusk, headlights on"}
 SERIES = {"car": [2], "bus": [5], "truck": [7], "motorcycle / bicycle": [1, 3], "person": [0]}
@@ -241,20 +242,32 @@ def alignment_figure(videos, out):
     cv2.imwrite(str(out), grid, [cv2.IMWRITE_JPEG_QUALITY, 88])
 
 
-def hero_frame(pub):
-    """Главная сайта: чистый опорный кадр камеры и детекции YOLO11s на нём (без правил и зон)."""
-    from ultralytics import YOLO
-    frame = cv2.imread(str(ROOT / "zones_ref.jpg"))
-    h, w = frame.shape[:2]
-    small = cv2.resize(frame, (1600, int(h * 1600 / w)), interpolation=cv2.INTER_AREA)
-    cv2.imwrite(str(pub / "media" / "hero.jpg"), small, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    names = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
-    res = YOLO(str(ROOT / "weights" / "yolo11s.pt"))(frame, imgsz=1280, conf=0.4, classes=list(names), verbose=False)[0]
-    boxes = [{"cls": names[int(c)], "conf": round(float(p), 2),
-              "box": [round(float(x1) / w, 4), round(float(y1) / h, 4), round(float(x2) / w, 4), round(float(y2) / h, 4)]}
-             for (x1, y1, x2, y2), c, p in zip(res.boxes.xyxy.tolist(), res.boxes.cls.tolist(), res.boxes.conf.tolist())]
-    (pub / "data" / "hero.json").write_text(json.dumps({"image": "media/hero.jpg", "model": "YOLO11s, imgsz 1280, conf 0.4",
-                                                        "detections": boxes}, indent=1), encoding="utf-8")
+def hero_clip(pub, videos_dir):
+    """Главная сайта: фрагмент исходного C3896 без разметки и треки нашего прохода Part A на нём
+    (рамки рисует сайт поверх видео, синхронно с его временем). Объекты событий — из
+    compute_events_debug, те же, что подсвечивает visualize_debug."""
+    import solution
+    from src.rules import compute_events_debug
+    video, start, end = HERO
+    obs = load_obs(ROOT / "cache" / f"{video}.obs.pkl.gz")
+    records, zones = reference_view(obs)
+    debug = compute_events_debug(records, zones, obs.light_samples, classes=solution.CLASSES)
+    w, h = obs.meta["width"], obs.meta["height"]
+    frames = defaultdict(list)
+    for r in obs.records:
+        if start <= r["t_sec"] <= end and r["conf"] >= 0.3:
+            frames[round(r["t_sec"] - start, 2)].append(
+                [r.get("stitched_id", r["track_id"]), r["cls_name"],
+                 round(r["x1"] / w, 4), round(r["y1"] / h, 4), round(r["x2"] / w, 4), round(r["y2"] / h, 4)])
+    objects = [[round(s0 - start, 2), round(e0 - start, 2), label, oid] for s0, e0, label, oid in debug
+               if oid is not None and e0 > start and s0 < end]
+    src = Path(videos_dir) / video
+    encode(src, pub / "media" / "hero.mp4", start=start, duration=end - start, width=1280, crf=26)
+    write_poster(src, start + 0.5, pub / "media" / "hero.jpg")
+    (pub / "data" / "hero.json").write_text(json.dumps({
+        "video": video, "start": start, "end": end, "media": "media/hero.mp4", "poster": "media/hero.jpg",
+        "frames": sorted([t, boxes] for t, boxes in frames.items()), "event_objects": objects,
+    }, separators=(",", ":")), encoding="utf-8")
 
 
 def main():
@@ -267,7 +280,7 @@ def main():
     for d in ("data", "media/annotated", "media/examples", "media/failures", "media/heatmaps",
               "media/trajectories", "media/eda", "media/posters"):
         (pub / d).mkdir(parents=True, exist_ok=True)
-    hero_frame(pub)
+    hero_clip(pub, args.videos)
     preds = json.loads((ROOT / "predictions_samples.json").read_text(encoding="utf-8"))
     shutil.copy2(ROOT / "predictions_samples.json", pub / "data" / "predictions_samples.json")
     videos = sorted(p for p in Path(args.videos).iterdir() if p.suffix.lower() == ".mp4")
