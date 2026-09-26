@@ -8,3 +8,4 @@ samples/
 .venv/
 !weights/*.pt
 logs/
+cache_crop18/
