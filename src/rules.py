@@ -466,6 +466,8 @@ def _zones_by_prefix(zones, prefixes):
     return names
 
 
+RIDER_MIN_SPEED = 1.2     # box diagonals/s; walking: median 0.4, 99th percentile of jaywalkers 2.8
+RIDER_MAX_ASPECT = 2.2    # box height / width; a standing or walking person is ~2.5-3.5
 RIDER_IOA = 0.6   # fraction of the person's box inside the vehicle's box: riding on/in it
 
 
@@ -494,6 +496,9 @@ def _mark_riders(groups, person_objs):
         rider = ((iw * ih) >= RIDER_IOA * area[:, None]).any(axis=1)
         for (_r, oid, k), is_rider in zip(plist, rider):
             person_objs[oid][k]["in_vehicle"] = bool(is_rider)
+    for oid, smp_list in person_objs.items():         # box shape, for riders without a vehicle box
+        for smp, r in zip(smp_list, groups[oid]):
+            smp["aspect"] = (r["y2"] - r["y1"]) / max(r["x2"] - r["x1"], 1.0)
 
 
 def detect_jaywalking(person_objs, roadway_zones, crossing_zones=(), min_duration=1.0,
@@ -516,9 +521,17 @@ def detect_jaywalking(person_objs, roadway_zones, crossing_zones=(), min_duratio
             max_gap,
         )
         for s, e in runs:
-            if e - s >= min_duration:
-                events.append([round(s, 2), round(e, 2), "jaywalking"])
-                ids.append(oid)
+            if e - s < min_duration:
+                continue
+            # The detector often misses a scooter/moped and sees only its rider (C3897, 3:54;
+            # C3905, 0:37): no vehicle box to sit in. On the road a rider moves fast and the box
+            # is squat (legs on the footboard, the box covers the scooter); a pedestrian's is tall.
+            run = [x for x in samples if s <= x["t"] <= e]
+            if (np.median([x["speed"] for x in run]) >= RIDER_MIN_SPEED
+                    and np.median([x.get("aspect", 3.0) for x in run]) < RIDER_MAX_ASPECT):
+                continue
+            events.append([round(s, 2), round(e, 2), "jaywalking"])
+            ids.append(oid)
     return (events, ids) if return_ids else events
 
 

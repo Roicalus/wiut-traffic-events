@@ -372,3 +372,20 @@ def test_events_at_the_edges_of_the_video_snap_to_0_and_duration():
     assert [0.0, 12.0, "stopped_vehicle"] in out
     assert [300.0, 317.81, "jaywalking"] in out
     assert all(e <= 317.817 for _, e, _ in out)
+
+
+def test_scooter_rider_without_a_detected_scooter_is_not_jaywalking():
+    """The detector saw only the rider (C3897, 3:54): fast and a squat box -> not a pedestrian.
+    A person walking across the same road with a tall box is still jaywalking."""
+    road = point_in("crossroad", exclude=("crossing_far", "crossing_near", "past_stop_line"), seed=51)
+    rider = track(1, 0, lambda t: (road[0] + 400 * t, road[1]), 0, 3, w=110, h=150)     # ~2.2 diag/s, h/w 1.4
+    assert events_of(rider, "jaywalking") == []
+    walker = track(2, 0, lambda t: (road[0] + 50 * t, road[1]), 0, 4, w=45, h=130)      # ~0.4 diag/s, h/w 2.9
+    assert len(events_of(walker, "jaywalking")) == 1
+
+
+def test_person_on_the_third_island_is_not_jaywalking():
+    """The tiled triangle at the lower-left crossing is a pedestrian island (sidewalk_island_3)."""
+    p = point_in("sidewalk_island_3", seed=52)
+    recs = track(3, 0, lambda t: p, 0, 5, w=45, h=130)
+    assert events_of(recs, "jaywalking") == []
