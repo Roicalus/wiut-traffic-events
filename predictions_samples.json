@@ -87,11 +87,6 @@
      284.18,
      287.69,
      "illegal_turn"
-    ],
-    [
-     318.52,
-     322.62,
-     "jaywalking"
     ]
    ],
    "risk": [
@@ -40925,11 +40920,6 @@
      "jaywalking"
     ],
     [
-     92.89,
-     100.4,
-     "jaywalking"
-    ],
-    [
      105.81,
      122.82,
      "stopped_vehicle"
@@ -40960,11 +40950,6 @@
      "jaywalking"
     ],
     [
-     181.98,
-     185.09,
-     "jaywalking"
-    ],
-    [
      220.22,
      224.82,
      "jaywalking"
@@ -40990,7 +40975,7 @@
      "jaywalking"
     ],
     [
-     301.9,
+     307.31,
      317.72,
      "jaywalking"
     ]
@@ -79148,11 +79133,6 @@
     [
      128.23,
      129.63,
-     "jaywalking"
-    ],
-    [
-     145.04,
-     149.75,
      "jaywalking"
     ],
     [
@@ -132646,33 +132626,33 @@
    "duration": 340.34,
    "budget_sec": 1021.0,
    "errors": [],
-   "part_a_sec": 346.2,
-   "part_b_sec": 444.6,
-   "total_sec": 790.8
+   "part_a_sec": 254.4,
+   "part_b_sec": 350.6,
+   "total_sec": 605.0
   },
   "C3897.MP4": {
    "duration": 317.82,
    "budget_sec": 953.5,
    "errors": [],
-   "part_a_sec": 306.8,
-   "part_b_sec": 313.1,
-   "total_sec": 620.0
+   "part_a_sec": 244.4,
+   "part_b_sec": 332.2,
+   "total_sec": 576.6
   },
   "C3902.MP4": {
    "duration": 317.82,
    "budget_sec": 953.5,
    "errors": [],
-   "part_a_sec": 230.3,
-   "part_b_sec": 309.9,
-   "total_sec": 540.2
+   "part_a_sec": 238.3,
+   "part_b_sec": 326.0,
+   "total_sec": 564.3
   },
   "C3905.MP4": {
    "duration": 127.63,
    "budget_sec": 382.9,
    "errors": [],
-   "part_a_sec": 92.2,
-   "part_b_sec": 124.2,
-   "total_sec": 216.4
+   "part_a_sec": 95.0,
+   "part_b_sec": 114.8,
+   "total_sec": 209.9
   }
  }
 }
