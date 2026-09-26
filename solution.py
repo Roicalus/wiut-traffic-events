@@ -21,6 +21,9 @@ from pathlib import Path
 
 os.environ.setdefault("YOLO_OFFLINE", "1")         # без сетевых проверок ultralytics
 os.environ.setdefault("YOLO_VERBOSE", "False")
+# cuBLAS выбирает рабочую память и ядра по состоянию GPU: без фиксированной
+# workspace результат fp16-сверток может отличаться между прогонами (до импорта torch).
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 # Логи по-русски: на машине с не-UTF-8 консолью print() бросил бы
 # UnicodeEncodeError внутри detect_events, и видео засчиталось бы пустым.
 for _stream in (sys.stdout, sys.stderr):
@@ -42,6 +45,7 @@ try:
     torch.manual_seed(0)
     torch.backends.cudnn.benchmark = False      # подбор ядер cuDNN недетерминирован
     torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True, warn_only=True)  # где нет детерминированного ядра — предупреждение, не ошибка
 except ImportError:
     pass
 
