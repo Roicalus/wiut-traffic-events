@@ -1,0 +1,37 @@
+[
+ {
+  "title": "The \"fixed\" camera moves between recordings",
+  "text": "Relative to C3896 (where we drew the scene zones), C3902 is shifted by ~140×77 px, rotated by 1° and zoomed by 1.5 %, with a slight change of perspective; C3905 by ~40×40 px and 1.1°. Inside one clip it sways by about ±10 px.",
+  "shaped": "Zones are drawn once and mapped to every video by a homography (SIFT on the static background, a bank of day/sunset/dusk reference frames). A synthetic stress test (shift 500 px, rotation 8°, zoom 0.8–1.25, tilt 8 %) aligns 60/60 cases within 1 px."
+ },
+ {
+  "title": "Day, sunset and dusk in four clips",
+  "text": "Two clips in direct sun, one at sunset, one at dusk with headlights on. Feature matching on plain grey frames (ORB) found only 16–21 correspondences between the day reference and the evening clips.",
+  "shaped": "CLAHE + SIFT (200–3000 correspondences) and extra reference frames for sunset and dusk."
+ },
+ {
+  "title": "In direct sun a lit signal lamp is dim",
+  "text": "The lit section of the traffic light reads V ≈ 45–115 in the day clips and 255 at dusk; an unlit red lens also glows at ~50. A brightness threshold tuned at dusk made the day clips 36–100 % \"unknown\".",
+  "shaped": "The signal state is the section that is 35 levels brighter than the others; frames where a vehicle closer to the camera covers the signal are skipped; green → red without yellow must hold 3 s. All clips now show the same cycle: red ≈37 s, green ≈37 s, yellow 3 s."
+ },
+ {
+  "title": "A red-light queue is normal traffic",
+  "text": "Four or more cars stand in the main-road queue on almost every red phase; 63–90 % of those standing clusters fall on red, and the queue clears within seconds of green.",
+  "shaped": "Congestion is reported only when the queue keeps standing through ≥ 15 s of green, or when a dense block of cars stands on the junction longer than one signal phase (≥ 40 s)."
+ },
+ {
+  "title": "Pedestrian islands inside the carriageway",
+  "text": "Two tiled islands sit between the far and the near zebra, inside the carriageway polygon. People walking from one zebra to the other over the islands produced most of the early jaywalking detections.",
+  "shaped": "Islands are separate zones excluded from jaywalking; people whose box sits inside a vehicle box (riders, bus passengers) are not pedestrians."
+ },
+ {
+  "title": "One forbidden manoeuvre on this junction",
+  "text": "Cars from the main road that drive deep into the junction and make a U-shaped turn back onto the lower street (instead of the right turn right after the far crossing).",
+  "shaped": "illegal_turn is a route rule: main road → U-turn apex on the junction → lower end of the near crossing within 3 s, not \"any turn inside a polygon\" (that caught legal manoeuvres around trucks)."
+ },
+ {
+  "title": "Where the time goes",
+  "text": "Decoding 4K H.264 on the CPU costs ≈0.7× the video duration per pass, and the harness decodes every frame again for Part B; the detector itself is cheap on the GPU.",
+  "shaped": "One decode pass for Part A (detector, traffic light and scanners share it) in a reader thread overlapped with inference; Part B runs detection in a worker thread while the harness decodes the next frames. 2.2× → 1.6–1.8× of the video duration (limit 3×)."
+ }
+]
