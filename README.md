@@ -45,7 +45,7 @@ installed at run time).
 
 ```
                      ┌──────────── one decode pass per video (Part A) ────────────┐
- video ─► zone ─►    │ every 3rd frame, top 18% cropped                           │
+ video ─► zone ─►    │ every 3rd frame, top 4% cropped (above the scene zones)    │
        alignment     │   YOLO11s (COCO, fp16, 1280) ─► ByteTrack (long buffer)    │─► tracks
      (src/align.py)  │   traffic-light state (lit section: top/middle/bottom)     │─► light timeline
                      │   obstacle / fire scanners (MOG2, HSV)                     │─► candidates
