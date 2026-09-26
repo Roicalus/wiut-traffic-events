@@ -133,8 +133,13 @@ installed at run time).
   sub-threshold term (≤ 0.3) for any collision course ranks the 1–5 s before
   contact higher for AP without creating alarms. Synthetic scenarios
   (`tests/test_risk.py`: T-bone, rear-end, pedestrian; queue braking, parallel
-  lanes, oncoming pass) pin the behaviour. The alarm comes late (0.1–0.6 s before
-  contact on the synthetic cases): that is the price of precision.
+  lanes, oncoming pass) pin the behaviour. `tools/risk_scenarios.py` measures it
+  on 15 crash and 9 safe scenarios with box jitter and missed detections, the way
+  evaluate.py counts alarms: 40 % of crashes alarmed, ~0.1 s before contact, no
+  false alarms; rear-end crashes at city speed are missed. Looser thresholds catch
+  up to 93 % but fire 15–43 times on the 18 min of samples (a dense queue looks
+  like a crash in image space), so the conservative setting is kept: with rare
+  accidents, false alarms cost more alarm-F1 than the extra hits bring.
 * **Speed.** Decoding 4K H.264 on the CPU is the main cost (≈0.7× video duration
   per pass, and there are two passes: ours in Part A and the harness's in Part B).
   Both parts overlap decoding with GPU inference: Part A reads frames in a
