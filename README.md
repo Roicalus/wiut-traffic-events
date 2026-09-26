@@ -94,6 +94,10 @@ installed at run time).
   filtering: new tracks need 0.6, weak detections only extend existing tracks
   through occlusions. At conf 0.35 a courier moped split into three tracks
   with a 2 s hole; median track length went from 7.5 s to 9.7 s.
+  Two-wheelers remain the weak spot: the COCO-trained detector often misses
+  motorcycles and mopeds on this view (far away, or next to cars and buses), so
+  their boxes flicker or vanish for a few frames and a violation by a two-wheeler
+  can be missed. Fine-tuning on this camera is the planned fix.
 * **Rules** (src/rules.py): congestion (a queue that keeps standing through
   ≥ 15 s of green, or a jam on the junction longer than one signal phase; a
   normal red-light queue is not congestion), stopped_vehicle (excluding waiting at
