@@ -28,10 +28,35 @@ def dist(a, b):
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
+PERSON_CLS = 0
+SPLIT_ID_OFFSET = 10_000_000   # номера отделённых частей не пересекаются с номерами трекера
+
+
+def _family(cls):
+    return "person" if cls == PERSON_CLS else "vehicle"
+
+
+def split_class_switches(records):
+    """ByteTrack в ultralytics не различает классы: пешеход, чью рамку накрыла
+    машина, может "передать" ей свой track_id (C3897, #829: человек до 301.9 с,
+    дальше тот же номер у машины — и машина стала "пешеходом на проезжей части").
+    Такой трек делится: записи преобладающего семейства (человек / транспорт)
+    сохраняют номер, остальные получают отдельный. Ставит r["obj_id"]."""
+    counts = {}
+    for r in records:
+        c = counts.setdefault(r["track_id"], {"person": 0, "vehicle": 0})
+        c[_family(r["cls"])] += 1
+    for r in records:
+        c = counts[r["track_id"]]
+        main = "person" if c["person"] > c["vehicle"] else "vehicle"
+        r["obj_id"] = r["track_id"] if _family(r["cls"]) == main else SPLIT_ID_OFFSET + r["track_id"]
+    return records
+
+
 def build_track_summaries(records):
     by_id = {}
     for r in records:
-        by_id.setdefault(r["track_id"], []).append(r)
+        by_id.setdefault(r.get("obj_id", r["track_id"]), []).append(r)
     summaries = {}
     for tid, recs in by_id.items():
         recs.sort(key=lambda r: r["frame"])
@@ -100,10 +125,11 @@ def stitch_records(records, max_gap_sec=MAX_GAP_SEC, max_dist_px=MAX_DIST_PX):
     prev_gap, prev_dist = MAX_GAP_SEC, MAX_DIST_PX
     MAX_GAP_SEC, MAX_DIST_PX = max_gap_sec, max_dist_px
     try:
+        split_class_switches(records)
         summaries = build_track_summaries(records)
         mapping = stitch(summaries)
         for r in records:
-            r["stitched_id"] = mapping[r["track_id"]]
+            r["stitched_id"] = mapping[r["obj_id"]]
     finally:
         MAX_GAP_SEC, MAX_DIST_PX = prev_gap, prev_dist
     return records

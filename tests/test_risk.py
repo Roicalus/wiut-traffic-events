@@ -127,3 +127,20 @@ def test_consistently_slow_run_raises_stride():
         est.idx = idx
         est._replan(now)
     assert est.stride > 2
+
+
+def test_track_id_handed_from_person_to_car_does_not_spike_risk():
+    """Номер пешехода перешёл к машине в 5 м от него: без сброса истории это
+    "скорость" в сотни px/с и ложный риск."""
+    from src.risk import RiskScorer
+    sc = RiskScorer((3840, 1800))
+    scores = []
+    for k in range(60):
+        t = k / 15
+        dets = [[1000, 900, 1300, 1100, 2, 2]]                                    # стоящая машина
+        if t < 2:
+            dets.append([1500, 800, 1540, 900, 7, 0])                             # стоящий человек
+        else:
+            dets.append([1320, 900, 1620, 1100, 7, 2])                            # тот же id — соседняя машина
+        scores.append(sc.feed(np.array(dets, np.float32), t))
+    assert max(scores) < 0.5, max(scores)

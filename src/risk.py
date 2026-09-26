@@ -117,8 +117,13 @@ class RiskScorer:
             dets = dets[inside]
         for x1, y1, x2, y2, tid, cls in dets:
             diag = max(float(np.hypot(x2 - x1, y2 - y1)), 1.0)
-            self.tracks.setdefault(int(tid), deque(maxlen=HISTORY)).append(
-                (t_sec, (x1 + x2) / 2.0, float(y2), diag, int(cls)))
+            d = self.tracks.setdefault(int(tid), deque(maxlen=HISTORY))
+            # ByteTrack не различает классы: номер пешехода может перейти к машине,
+            # накрывшей его рамку. Скорость "от человека до машины" — ложный скачок,
+            # поэтому при смене семейства история трека начинается заново.
+            if d and (int(d[-1][4]) in VEHICLE_CLS) != (int(cls) in VEHICLE_CLS):
+                d.clear()
+            d.append((t_sec, (x1 + x2) / 2.0, float(y2), diag, int(cls)))
         for tid in [k for k, d in self.tracks.items() if t_sec - d[-1][0] > STALE_SEC]:
             del self.tracks[tid]
 

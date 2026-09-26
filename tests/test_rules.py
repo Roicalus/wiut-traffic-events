@@ -352,3 +352,14 @@ def test_driving_through_on_red_is_red_light():
     stitch_records(recs)
     labels = [e[2] for e in rules.compute_events(recs, ZONES, _red_then_green(99, 8))]
     assert labels.count("red_light") == 1 and "stop_line" not in labels, labels
+
+
+def test_person_track_handed_to_a_car_is_not_jaywalking():
+    """ByteTrack отдал номер пешехода машине (C3897, #829): машина на проезжей
+    части — не пешеход. Человек на переходе, потом тот же номер — машина."""
+    walk = point_in("crossing_far", seed=41)
+    road = point_in("crossroad", exclude=("crossing_far", "crossing_near", "past_stop_line"), seed=42)
+    recs = track(7, 0, lambda t: walk, 0, 6, w=40, h=100)                       # человек на зебре
+    recs += track(7, 2, lambda t: (road[0] + 40 * (t - 6), road[1]), 6, 16, w=300, h=200)  # тот же id — машина
+    ev = events_of(recs, "jaywalking")
+    assert ev == [], ev
