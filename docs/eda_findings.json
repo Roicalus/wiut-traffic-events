@@ -1,7 +1,7 @@
 [
  {
   "title": "The \"fixed\" camera moves between recordings",
-  "text": "Relative to C3896 (where we drew the scene zones), C3902 is shifted by ~140×77 px, rotated by 1° and zoomed by 1.5 %, with a slight change of perspective; C3905 by ~40×40 px and 1.1°. Inside one clip it sways by about ±10 px.",
+  "text": "Relative to C3896 (where we drew the scene zones), the zones of C3902 land ~90×75 px off (up to 109 px), with a 1° rotation, 1 % zoom and a slight change of perspective; C3905 is off by up to ~60 px and 1.2°. Inside one clip the camera sways by about ±10 px.",
   "shaped": "Zones are drawn once and mapped to every video by a homography (SIFT on the static background, a bank of day/sunset/dusk reference frames). A synthetic stress test (shift 500 px, rotation 8°, zoom 0.8–1.25, tilt 8 %) aligns 60/60 cases within 1 px."
  },
  {
@@ -21,8 +21,8 @@
  },
  {
   "title": "Pedestrian islands inside the carriageway",
-  "text": "Two tiled islands sit between the far and the near zebra, inside the carriageway polygon. People walking from one zebra to the other over the islands produced most of the early jaywalking detections.",
-  "shaped": "Islands are separate zones excluded from jaywalking; people whose box sits inside a vehicle box (riders, bus passengers) are not pedestrians."
+  "text": "Three tiled islands sit inside the carriageway polygons: two between the far and the near zebra and one at the lower-left corner next to the near zebra. People walking from one zebra to the other over the islands produced most of the early jaywalking detections.",
+  "shaped": "Islands are separate zones excluded from jaywalking. People whose box sits inside a vehicle box (riders, bus passengers) are not pedestrians, and neither are fast 'people' with a squat box: scooter riders whose scooter the detector missed."
  },
  {
   "title": "One forbidden manoeuvre on this junction",
@@ -32,6 +32,6 @@
  {
   "title": "Where the time goes",
   "text": "Decoding 4K H.264 on the CPU costs ≈0.7× the video duration per pass, and the harness decodes every frame again for Part B; the detector itself is cheap on the GPU.",
-  "shaped": "One decode pass for Part A (detector, traffic light and scanners share it) in a reader thread overlapped with inference; Part B runs detection in a worker thread while the harness decodes the next frames. 2.2× → 1.6–1.8× of the video duration (limit 3×)."
+  "shaped": "One decode pass for Part A (detector, traffic light and scanners share it) in a reader thread overlapped with inference; Part B runs detection in a worker thread while the harness decodes the next frames. 2.2× → 1.4–1.9× of the video duration (limit 3×)."
  }
 ]
