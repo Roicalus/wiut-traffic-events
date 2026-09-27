@@ -56,8 +56,8 @@ EXAMPLES = [
      "in a queue: stopping on the junction is an event even if the car leaves with the next green phase."),
     ("congestion", "C3896.MP4", 39.0, "The junction jams: a dense block of cars stands for longer than one "
      "signal phase. An ordinary red-light queue is not congestion; it clears on green."),
-    ("jaywalking", "C3897.MP4", 142.3, "Pedestrians leave the zebra and cut across the asphalt towards the "
-     "near crossing."),
+    ("jaywalking", "C3897.MP4", 142.3, "Pedestrians walk on the asphalt before the far zebra, cutting diagonally "
+     "towards it instead of stepping onto it at the kerb."),
     ("stop_line", "C3905.MP4", 77.7, "At dusk a car stops on red past the stop line, its front on the far "
      "zebra, and waits there for the green instead of behind the line."),
 ]
