@@ -166,7 +166,7 @@ rule-based.
 | YOLO11s, YOLO11n weights — Ultralytics | detection | AGPL-3.0 |
 | COCO 2017 (Ultralytics' pre-training of the weights above) | — (not used by us directly) | CC BY 4.0 |
 | ByteTrack (implementation in ultralytics) | tracking | MIT (original) / AGPL-3.0 (ultralytics) |
-| Our own labels of the sample videos (`labels/`, in progress) | dev set, threshold tuning | ours |
+| The four sample videos (organisers) | scene zones, thresholds set by watching the renders; no training, no labels yet (`tools/label_tool.py` is ready) | provided by the organisers |
 
 No other datasets. No hosted models or paid APIs at any stage of inference.
 The repository is licensed under **AGPL-3.0**, as required by Ultralytics YOLO.
@@ -174,13 +174,17 @@ The repository is licensed under **AGPL-3.0**, as required by Ultralytics YOLO.
 ## 4. Determinism
 
 * Seeds fixed in `solution.py` (python `random`, numpy, torch);
-  `cudnn.benchmark = False`, `cudnn.deterministic = True`; OpenCV RANSAC seed
-  fixed (`cv2.setRNGSeed(0)`). ByteTrack and all rules are deterministic.
+  `cudnn.benchmark = False`, `cudnn.deterministic = True`,
+  `torch.use_deterministic_algorithms(True, warn_only=True)`,
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8`; OpenCV RANSAC seed fixed
+  (`cv2.setRNGSeed(0)`). ByteTrack and all rules are deterministic.
+  Checked: two full harness runs from a clean clone, offline, gave identical
+  events and identical risk curves on all four samples (max difference 0.0).
   `python tools/presubmit.py --determinism samples/<video>` runs the harness
   twice and compares the outputs.
 * Threads (frame reader in Part A, detector worker in Part B) only overlap
   work; frames are consumed in a fixed order, so outputs are the same as a
-  sequential run (checked: identical events on C3905).
+  sequential run.
 * **Only time-dependent behaviour:** emergency time guards. If the tracker
   pass is projected above 1.5× the video duration, the frame stride is
   increased; Part B increases its stride if it would miss the 3× deadline.
